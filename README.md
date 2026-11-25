@@ -105,3 +105,32 @@ Hosted workflow-call execution and artifact upload passed for the Streaming
 Media pilot. The caller-driver/subset path also passed the [Framerot Linux OBS 32 pilot](https://github.com/myrqyry/framerot/actions/runs/45577168933), including all 18 native tests and both downloaded artifact audits.
 
 Source: myrqyry/streaming-media-source, merged baseline 2fbb807.
+
+## Rust CLI (local tooling)
+
+The standalone obs-ci executable is an incremental port of the shared
+CI contract. Build it locally with Rust 1.93.1 (the toolchain tested here):
+
+    cargo build --release --locked
+    ./target/release/obs-ci plan --module obs-streaming-media --minimum-tests 9
+    ./target/release/obs-ci audit /path/to/module-test.zip
+
+On Windows use target/release/obs-ci.exe. The plan command accepts the
+current full and linux-obs32 profiles, driver and source-package options,
+and outputs the existing workflow's matrix JSON. Audit is read-only:
+it checks the adjacent SHA256SUMS, ZIP or tar/gzip integrity, safe member
+paths and types, duplicate/case-colliding names, and basic payload exclusions.
+It prints a JSON receipt with archive name, SHA-256, size and file counts.
+
+Run the Rust tests and the cross-implementation parity suite:
+
+    cargo test --locked
+    cargo build --locked
+    python3 tests/test_rust_parity.py
+    cargo clippy --locked --all-targets -- -D warnings
+
+The existing Python workflow remains authoritative; the Rust tool does
+not yet implement source-package verification, public renaming, SDK
+provisioning, caller builds, or publication. No caller needs Rust today.
+Self-CI checks both implementations on all four runner families; hosted
+qualification remains pending. The dependency lockfile is committed.

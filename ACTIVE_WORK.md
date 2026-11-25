@@ -147,3 +147,20 @@ native case-only rename test is cross-platform; alias simulation only runs
 on case-sensitive filesystems. Hosted self-CI has not run; no publishing
 or downstream pin changes. Next: matrix/source host selection, synthetic
 workflow-call fixture, and SDK provisioning extraction based on real callers.
+
+## Rust CI engine first slice
+
+Owner clarified Rust should be considered for implementing the infrastructure,
+not merely for building Rust plugins. Added standalone obs-ci crate with
+plan (current matrix and validation contract) and audit (read-only binary
+archive validation and JSON receipt). Cargo lockfile retained. Red/green
+CLI tests, persistent Python/Rust parity suite, fixed ZIP reader duplicate
+name deduplication and Unicode full case folding before checkpoint.
+Three Rust integration tests and two parity tests (14 planner cases, 24
+archive cases) passed, along with all 12 existing workflow tests and
+Clippy. All nine actual hosted binary archives pass final Rust audit;
+six valid planner combinations match Python JSON. Self-CI now includes
+pinned Rust 1.93.1 checks across the four runner families. Python workflow
+remains authoritative. Rust source-package and rename support, composable
+selectors and deterministic source host, qualification fixture, and pinned
+tool distribution remain open. No publishing or caller migration.

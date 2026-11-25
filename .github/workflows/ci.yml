@@ -34,3 +34,14 @@ jobs:
       - name: Exercise workflow contracts
         shell: bash
         run: python tests/test_workflow.py
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.93.1 --profile minimal --component rustfmt --component clippy
+      - name: Check Rust CLI
+        shell: bash
+        run: |
+          cargo +1.93.1 fmt --check
+          cargo +1.93.1 test --locked
+          cargo +1.93.1 clippy --locked --all-targets -- -D warnings
+          cargo +1.93.1 build --locked
+          python tests/test_rust_parity.py
