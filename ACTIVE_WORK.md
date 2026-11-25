@@ -101,3 +101,15 @@ file sets, matching SHA256SUMS, all seven installed-file digests match
 PAYLOAD-SHA256SUMS, and the source tar contains all 63 tracked file
 paths and no extras. No Windows/macOS full plugin qualification or
 runtime OBS installation claimed. No merge performed.
+
+## Shared contract hardening
+
+External architecture audit identified late input validation and weak payload
+manifest path validation. Reproduced 16 failing regression subcases, moved
+existing identifier/test-floor validation to plan without altering accepted
+inputs, and reject unsafe or duplicate payload paths. Seven contract tests
+pass; the new source gate accepts the actual hosted Framerot artifact.
+New revision is local-only and requires hosted qualification before callers
+update pins. Next: common archive structural validation against real pilot
+archives, cross-platform case-only rename handling, self-testing CI, then
+shared SDK provisioning and caching. Preserve caller-specific verifiers.

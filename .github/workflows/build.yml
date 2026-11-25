@@ -46,9 +46,17 @@ jobs:
           PROFILE: ${{ inputs.profile }}
           DRIVER: ${{ inputs.driver }}
           SOURCE_PACKAGE: ${{ inputs.source-package }}
+          MODULE: ${{ inputs.module }}
+          PUBLIC_NAME: ${{ inputs.package-name || inputs.module }}
+          MINIMUM_TESTS: ${{ inputs.minimum-tests }}
         run: |
           python3 - <<'PYTHON'
-          import json, os
+          import json, os, re
+          for key in ("MODULE", "PUBLIC_NAME"):
+              if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", os.environ[key]):
+                  raise SystemExit(f"Invalid {key}: expected an alphanumeric identifier with hyphens or underscores")
+          if not re.fullmatch(r"[1-9][0-9]*", os.environ["MINIMUM_TESTS"]):
+              raise SystemExit("Invalid MINIMUM_TESTS: expected a positive integer")
           profile, driver, source = (os.environ[k] for k in ("PROFILE", "DRIVER", "SOURCE_PACKAGE"))
           if profile not in ("full", "linux-obs32") or driver not in ("native", "caller"):
               raise SystemExit("Unsupported matrix profile or driver")
@@ -91,12 +99,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate build inputs
-        shell: bash
-        run: |
-          [[ "$MODULE" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
-          [[ "$PUBLIC_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
-          [[ "$MINIMUM_TESTS" =~ ^[1-9][0-9]*$ ]]
       - name: Check README links and verifier tests
         if: runner.os == 'Linux' && inputs.driver == 'native'
         run: |
@@ -175,9 +177,21 @@ jobs:
               digest = hashlib.file_digest(f, "sha256").hexdigest()
           if checksums.read_text(encoding="utf-8") != digest + "  " + archive.name + "\n":
               raise SystemExit("Source archive SHA-256 mismatch")
-          if not all(re.fullmatch(r"[a-f0-9]{64}  [^\r\n]+", line)
-                     for line in payload.read_text(encoding="utf-8").splitlines()):
-              raise SystemExit("Invalid payload checksum manifest")
+          lines = payload.read_text(encoding="utf-8").splitlines()
+          if not lines:
+              raise SystemExit("Empty payload checksum manifest")
+          seen = set()
+          for line in lines:
+              entry = re.fullmatch(r"[a-f0-9]{64}  ([^\r\n]+)", line)
+              if not entry:
+                  raise SystemExit("Invalid payload checksum manifest")
+              name = entry.group(1)
+              if (not name.strip() or any(part in ("", ".", "..") for part in name.split("/"))
+                      or any(ord(c) < 32 or c in "\\:" for c in name)):
+                  raise SystemExit("Unsafe payload checksum path")
+              if name in seen:
+                  raise SystemExit("Duplicate payload checksum path")
+              seen.add(name)
           PYTHON
       - name: Upload verified test package
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

@@ -42,7 +42,8 @@ caller repository, assume artifacts are externally downloadable.
 
 The default profile is `full` (eight target/version combinations).
 `profile: linux-obs32` selects only the established Ubuntu 24.04 / OBS 32.2.0
-target; unsupported profiles fail at planning rather than silently skipping jobs.
+target; unsupported profiles and invalid module/package identifiers or Linux test floors
+fail at planning before native runners are allocated.
 The default driver preserves the original pinned SDK verifier contract.
 With `driver: caller`, the shared workflow runs the caller's
 `.github/scripts/ci-verify.sh` after installing the common Linux dependencies.
@@ -56,7 +57,8 @@ Optional `source-package: true` is available for caller-owned drivers.
 On the Linux OBS 32.2.0 job, the caller must additionally prepare
 RUNNER_TEMP/plugin-ci-source with PUBLIC_NAME-source.tar.gz, its SHA256SUMS
 and the verified installed-file PAYLOAD-SHA256SUMS manifest. The source
-archive is checked before either artifact is uploaded. Source and binary
+archive checksum and nonempty, unique, relative payload-manifest paths are
+checked before either artifact is uploaded. Source and binary
 are uploaded separately with exact paths and 14-day retention. All source
 archive licensing, tracked-file allowlists and payload validation remain
 the caller's responsibility. No release is created.
@@ -93,6 +95,6 @@ Run local contract tests with Python 3.11+, Bash and PyYAML:
 The tests cover the eight unique target/version combinations, exact
 upload paths, permission boundaries and real checksum-gate execution.
 Hosted workflow-call execution and artifact upload passed for the Streaming
-Media pilot. The new caller-driver/subset path needs its own hosted qualification.
+Media pilot. The caller-driver/subset path also passed the [Framerot Linux OBS 32 pilot](https://github.com/myrqyry/framerot/actions/runs/45577168933), including all 18 native tests and both downloaded artifact audits.
 
 Source: myrqyry/streaming-media-source, merged baseline 2fbb807.

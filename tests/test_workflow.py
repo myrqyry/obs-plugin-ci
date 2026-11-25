@@ -17,13 +17,14 @@ class Contract(unittest.TestCase):
         self.job = self.workflow["jobs"]["build"]
         self.steps = self.job["steps"]
 
-    def plan(self, profile, driver="native", source="false"):
+    def plan(self, profile, driver="native", source="false", **inputs):
         step = next(s for s in self.workflow["jobs"]["plan"]["steps"]
                     if s.get("name") == "Select qualified matrix")
         with tempfile.TemporaryDirectory() as temp:
             output=Path(temp)/"output"
             env={**os.environ,"PROFILE":profile,"DRIVER":driver,
-                 "SOURCE_PACKAGE":source,"GITHUB_OUTPUT":str(output)}
+                 "SOURCE_PACKAGE":source,"GITHUB_OUTPUT":str(output),
+                 "MODULE":"example","PUBLIC_NAME":"example","MINIMUM_TESTS":"1", **inputs}
             result=subprocess.run(["bash","-c",step["run"]],env=env,capture_output=True)
             if result.returncode:
                 return None
@@ -44,6 +45,16 @@ class Contract(unittest.TestCase):
         self.assertIsNone(self.plan("typo"))
         self.assertIsNone(self.plan("linux-obs32","unknown"))
         self.assertIsNone(self.plan("full","native","true"))
+
+    def test_invalid_build_inputs_fail_before_matrix_expansion(self):
+        for key, values in {
+            "MODULE": ["", "../module", "has space"],
+            "PUBLIC_NAME": ["", "bad/name", "bad\nname"],
+            "MINIMUM_TESTS": ["0", "-1", "1.5", "not-a-number"],
+        }.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    self.assertIsNone(self.plan("full", **{key: value}))
 
     def test_upload_has_exact_paths_and_no_release_permission(self):
         upload = next(s for s in self.steps if s.get("name") == "Upload verified test package")
@@ -124,6 +135,17 @@ class Contract(unittest.TestCase):
             def gate():
                 return subprocess.run(["bash","-c",step["run"]],env=env,capture_output=True).returncode
             self.assertEqual(gate(),0)
+            digest = "a" * 64
+            for invalid in [
+                "\n", digest + "  ../outside\n", digest + "  /absolute\n",
+                digest + "  C:/absolute\n", digest + "  folder/../outside\n",
+                digest + "  folder//file\n",
+                digest + "  folder/file\n" + digest + "  folder/file\n",
+            ]:
+                with self.subTest(invalid=invalid):
+                    payload.write_text(invalid)
+                    self.assertNotEqual(gate(),0)
+            payload.write_text(digest+"  framerot/bin/64bit/framerot.so\n")
             archive.write_bytes(b"corrupted")
             self.assertNotEqual(gate(),0)
             archive.write_bytes(b"verified source archive")
