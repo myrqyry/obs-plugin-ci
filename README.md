@@ -32,7 +32,16 @@ The SHA-256 file contains exactly one digest plus the archive filename.
 The optional `package-name` input controls public archive and artifact names
 independently of the installed module identity. The verified archive is renamed
 without changing its bytes, and the checksum manifest is updated to match.
-Omitting the input preserves the module-based name.
+Omitting the input preserves the module-based name. Case-only public renames
+use a temporary intermediate path to preserve exact spelling on
+case-insensitive filesystems; distinct destination entries are rejected.
+
+The shared binary handoff independently validates ZIP member CRCs or
+tar/gzip readability and gzip checksums without extracting anything.
+It rejects empty payloads, unsafe paths, links, special members,
+duplicate or case-colliding paths, file/directory conflicts, and .git,
+.env and .pdb payloads. Exact OBS layout, module/resource allowlists and
+license requirements remain caller-owned.
 No logs, credentials, scenes, SDKs, bundled runtime executables or raw
 build directories are uploaded. Artifact retention is 14 days, and
 artifacts are explicitly test packages, not release binaries. On a public

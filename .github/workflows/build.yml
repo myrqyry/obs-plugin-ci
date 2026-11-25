@@ -136,7 +136,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PYTHON'
-          import hashlib, os
+          import gzip, hashlib, os, stat, tarfile, tempfile, zipfile
           from pathlib import Path
           work = Path(os.environ["RUNNER_TEMP"]) / "plugin-ci"
           archive = work / os.environ["ARCHIVE"]
@@ -148,15 +148,99 @@ jobs:
           expected = digest + "  " + archive.name + "\n"
           if checksums.read_text(encoding="utf-8") != expected:
               raise SystemExit("Archive name or SHA-256 mismatch")
+          # Verify the container independently of the caller's module-specific
+          # payload policy. Never extract untrusted members to the filesystem.
+          entries = {}
+          spellings = {}
+          nonempty_files = 0
+
+          def member(name, directory, size):
+              global nonempty_files
+              if directory and name.endswith("/"):
+                  name = name[:-1]
+              parts = name.split("/")
+              if (any(p in ("", ".", "..") or p.endswith((" ", ".")) for p in parts)
+                      or any(ord(c) < 32 or c in "\\\\:" for c in name)):
+                  raise ValueError(f"Unsafe archive path: {name!r}")
+              if any(p.casefold() in (".git", ".env") or p.casefold().endswith(".pdb") for p in parts):
+                  raise ValueError(f"Forbidden archive payload: {name!r}")
+              for end in range(1, len(parts) + 1):
+                  prefix = "/".join(parts[:end])
+                  previous = spellings.setdefault(prefix.casefold(), prefix)
+                  if previous != prefix:
+                      raise ValueError(f"Case-colliding archive paths: {previous!r}, {prefix!r}")
+              if name in entries:
+                  raise ValueError(f"Duplicate archive path: {name!r}")
+              entries[name] = directory
+              if not directory and size:
+                  nonempty_files += 1
+
+          try:
+              if archive.name.endswith(".zip"):
+                  with zipfile.ZipFile(archive) as package:
+                      for info in package.infolist():
+                          kind = stat.S_IFMT(info.external_attr >> 16)
+                          if kind not in (0, stat.S_IFDIR if info.is_dir() else stat.S_IFREG):
+                              raise ValueError(f"Unsupported ZIP member type: {info.filename!r}")
+                          member(info.orig_filename, info.is_dir(), info.file_size)
+                      bad = package.testzip()
+                      if bad is not None:
+                          raise ValueError(f"ZIP CRC mismatch: {bad!r}")
+              elif archive.name.endswith(".tar.gz"):
+                  with tarfile.open(archive, "r:gz") as package:
+                      for info in package:
+                          if not (info.isfile() or info.isdir()):
+                              raise ValueError(f"Unsupported tar member type: {info.name!r}")
+                          member(info.name, info.isdir(), info.size)
+                          if info.isfile():
+                              with package.extractfile(info) as stream:
+                                  while stream.read(1024 * 1024):
+                                      pass
+                  # Tar readers can stop at the tar end marker before gzip
+                  # verifies its footer. Drain the compressed stream too.
+                  with gzip.open(archive, "rb") as stream:
+                      while stream.read(1024 * 1024):
+                          pass
+              else:
+                  raise ValueError("Unsupported package extension")
+              if not nonempty_files:
+                  raise ValueError("Archive has no nonempty regular files")
+              for name in entries:
+                  parts = name.split("/")
+                  if any(entries.get("/".join(parts[:i])) is False for i in range(1, len(parts))):
+                      raise ValueError(f"Archive file used as a directory: {name!r}")
+          except (OSError, EOFError, ValueError, RuntimeError, tarfile.TarError, zipfile.BadZipFile) as exc:
+              raise SystemExit(f"Invalid package archive: {exc}") from exc
           public = work / os.environ["PUBLIC_ARCHIVE"]
-          if public != archive:
-              if public.exists() or public.is_symlink():
+          if public.name != archive.name:
+              # Path equality is case-insensitive on Windows. A case-only
+              # alias is safe only if there is no distinct destination entry.
+              case_only = public.name.casefold() == archive.name.casefold()
+              if public.is_symlink() or (public.exists() and (
+                      not case_only or not archive.samefile(public)
+                      or any(p.name == public.name for p in work.iterdir()))):
                   raise SystemExit("Public archive already exists")
-              archive.rename(public)
+              if case_only:
+                  temp = Path(tempfile.mkdtemp(dir=work))
+                  intermediate = temp / archive.name
+                  try:
+                      archive.rename(intermediate)
+                      try:
+                          intermediate.rename(public)
+                      except OSError:
+                          intermediate.rename(archive)
+                          raise
+                  finally:
+                      # If even rollback fails, retain the original archive
+                      # in the temporary directory rather than deleting it.
+                      if not intermediate.exists():
+                          temp.rmdir()
+              else:
+                  archive.rename(public)
               expected = digest + "  " + public.name + "\n"
               checksums.write_text(expected, encoding="utf-8", newline="\n")
           if os.getenv("GITHUB_STEP_SUMMARY"):
-              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8", newline="\\n") as summary:
                   summary.write("### Verified module-only test package\n\n```\n" + expected + "```\n")
           PYTHON
       - name: Verify source package

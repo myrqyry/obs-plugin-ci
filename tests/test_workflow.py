@@ -1,5 +1,9 @@
 """Contract tests for the reusable native build workflow."""
 import hashlib
+import io
+import tarfile
+import zipfile
+import stat
 import json
 import os
 from pathlib import Path
@@ -10,6 +14,19 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/build.yml"
+
+def make_archive(path, entries=(("example/bin/plugin.so", b"module"),)):
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, data in entries:
+                archive.writestr(name, data)
+    else:
+        with tarfile.open(path, "w:gz") as archive:
+            for name, data in entries:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+
 
 class Contract(unittest.TestCase):
     def setUp(self):
@@ -72,9 +89,10 @@ class Contract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             p=Path(temp)/"plugin-ci"; p.mkdir()
             archive=p/"example-linux-x86_64-obs32.2.0-test.tar.gz"
-            archive.write_bytes(b"test package")
+            make_archive(archive)
             check=p/"SHA256SUMS"
-            expected=hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name+"\n"
+            original=archive.read_bytes()
+            expected=hashlib.sha256(original).hexdigest()+"  "+archive.name+"\n"
             env={**os.environ,"RUNNER_TEMP":temp,"ARCHIVE":archive.name,"PUBLIC_ARCHIVE":archive.name}
             def gate():
                 return subprocess.run(["bash","-c",step["run"]],env=env,
@@ -83,7 +101,7 @@ class Contract(unittest.TestCase):
             self.assertEqual(gate(),0)
             archive.write_bytes(b"corrupted")
             self.assertNotEqual(gate(),0)
-            archive.write_bytes(b"test package")
+            archive.write_bytes(original)
             check.write_text(expected+"extra entry\n")
             self.assertNotEqual(gate(),0)
             check.unlink()
@@ -98,7 +116,7 @@ class Contract(unittest.TestCase):
             p=Path(temp)/"plugin-ci"; p.mkdir()
             old=p/"obs-streaming-media-linux-x86_64-obs32.2.0-test.tar.gz"
             new=p/"streaming-media-source-linux-x86_64-obs32.2.0-test.tar.gz"
-            old.write_bytes(b"verified native module archive")
+            make_archive(old)
             digest=hashlib.sha256(old.read_bytes()).hexdigest()
             manifest=p/"SHA256SUMS"
             manifest.write_text(digest+"  "+old.name+"\n")
@@ -114,6 +132,115 @@ class Contract(unittest.TestCase):
             self.assertFalse(old.exists())
             self.assertEqual(hashlib.sha256(new.read_bytes()).hexdigest(),digest)
             self.assertEqual(manifest.read_text(),digest+"  "+new.name+"\n")
+
+    def test_binary_archive_structure_is_verified_even_with_matching_digest(self):
+        step = next(s for s in self.steps if s.get("name") == "Verify artifact handoff")
+        for extension in ("tar.gz", "zip"):
+            with tempfile.TemporaryDirectory() as temp:
+                work = Path(temp) / "plugin-ci"
+                work.mkdir()
+                archive = work / ("example-test." + extension)
+                env = {**os.environ, "RUNNER_TEMP": temp, "ARCHIVE": archive.name,
+                       "PUBLIC_ARCHIVE": archive.name}
+                def gate():
+                    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    (work / "SHA256SUMS").write_text(digest + "  " + archive.name + "\n")
+                    return subprocess.run(["bash", "-c", step["run"]], env=env,
+                                          capture_output=True)
+                make_archive(archive)
+                result = gate()
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                archive.write_bytes(b"not an archive")
+                self.assertNotEqual(gate().returncode, 0)
+                for entries in ((), (("../outside", b"x"),), (("/absolute", b"x"),),
+                                (("C:/absolute", b"x"),), (("folder/../outside", b"x"),),
+                                (("folder\\outside", b"x"),), (("folder/.git/config", b"x"),),
+                                (("folder/.env", b"x"),), (("folder/debug.pdb", b"x"),),
+                                (("folder/file", b"x"), ("folder/File", b"y")),
+                                (("folder", b"x"), ("folder/file", b"y")),
+                                (("Folder/a", b"x"), ("folder/b", b"y"))):
+                    with self.subTest(extension=extension, entries=entries):
+                        make_archive(archive, entries)
+                        self.assertNotEqual(gate().returncode, 0)
+                if extension == "zip":
+                    with zipfile.ZipFile(archive, "w") as z:
+                        link = zipfile.ZipInfo("folder/link")
+                        link.create_system = 3
+                        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+                        z.writestr(link, "../outside")
+                else:
+                    with tarfile.open(archive, "w:gz") as t:
+                        link = tarfile.TarInfo("folder/link")
+                        link.type = tarfile.SYMTYPE
+                        link.linkname = "../outside"
+                        t.addfile(link)
+                self.assertNotEqual(gate().returncode, 0)
+                if extension == "zip":
+                    make_archive(archive, (("folder/file", b"unique-payload-marker"),))
+                    data = archive.read_bytes()
+                    self.assertIn(b"unique-payload-marker", data)
+                    archive.write_bytes(data.replace(b"unique-payload-marker", b"broken-payload-marker"))
+                    self.assertNotEqual(gate().returncode, 0)
+                make_archive(archive)
+                data = archive.read_bytes()
+                archive.write_bytes(data[:-8])
+                self.assertNotEqual(gate().returncode, 0)
+
+    def test_case_only_public_name_preserves_bytes_and_exact_spelling(self):
+        step = next(s for s in self.steps if s.get("name") == "Verify artifact handoff")
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp) / "plugin-ci"
+            work.mkdir()
+            old = work / "FrameRot-test.tar.gz"
+            new = work / "framerot-test.tar.gz"
+            make_archive(old)
+            original = old.read_bytes()
+            digest = hashlib.sha256(original).hexdigest()
+            manifest = work / "SHA256SUMS"
+            manifest.write_text(digest + "  " + old.name + "\n")
+            env = {**os.environ, "RUNNER_TEMP": temp, "ARCHIVE": old.name,
+                   "PUBLIC_ARCHIVE": new.name}
+            result = subprocess.run(["bash", "-c", step["run"]], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual({p.name for p in work.iterdir()}, {new.name, manifest.name})
+            self.assertEqual(new.read_bytes(), original)
+            self.assertEqual(manifest.read_text(), digest + "  " + new.name + "\n")
+
+    def test_case_insensitive_alias_does_not_count_as_collision(self):
+        step = next(s for s in self.steps if s.get("name") == "Verify artifact handoff")
+        script = step["run"].split("<<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp) / "plugin-ci"
+            work.mkdir()
+            old = work / "FrameRot-test.tar.gz"
+            new = work / "framerot-test.tar.gz"
+            make_archive(old)
+            digest = hashlib.sha256(old.read_bytes()).hexdigest()
+            (work / "SHA256SUMS").write_text(digest + "  " + old.name + "\n")
+            env = {**os.environ, "RUNNER_TEMP": temp, "ARCHIVE": old.name,
+                   "PUBLIC_ARCHIVE": new.name}
+            # Model a case-insensitive filesystem's alias lookup on Linux.
+            prefix = """
+from pathlib import Path
+from unittest.mock import patch
+import os
+old = Path(os.environ["RUNNER_TEMP"]) / "plugin-ci" / os.environ["ARCHIVE"]
+new = old.with_name(os.environ["PUBLIC_ARCHIVE"])
+exists = Path.exists
+samefile = Path.samefile
+def alias_exists(path):
+    return exists(old) if path.name == new.name and not exists(path) else exists(path)
+def alias_samefile(path, other):
+    if {path.name, other.name} == {old.name, new.name} and exists(old) and not exists(new):
+        return True
+    return samefile(path, other)
+with patch.object(Path, "exists", alias_exists), patch.object(Path, "samefile", alias_samefile):
+    exec(SCRIPT)
+"""
+            result = subprocess.run(["python3", "-c", prefix.replace("SCRIPT", repr(script))],
+                                    env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual({p.name for p in work.iterdir()}, {new.name, "SHA256SUMS"})
 
     def test_source_archive_handoff_and_exact_upload(self):
         step=next(s for s in self.steps if s.get("name")=="Verify source package")

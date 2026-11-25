@@ -113,3 +113,21 @@ New revision is local-only and requires hosted qualification before callers
 update pins. Next: common archive structural validation against real pilot
 archives, cross-platform case-only rename handling, self-testing CI, then
 shared SDK provisioning and caching. Preserve caller-specific verifiers.
+
+## Binary archive gate and case-only renames
+
+Added independent binary archive structure and checksum validation before
+public rename/upload. Reject empty payloads, malformed/truncated containers,
+unsafe paths, links/special members, duplicate and case-colliding names,
+file/directory conflicts and selected forbidden payloads. Keep exact layout,
+license and resource policy caller-owned. Case-only rename now compares
+literal names and distinguishes a filesystem alias from a real destination;
+uses a temporary intermediate and preserves original bytes on rollback.
+Regression tests reproduced checksum-valid nonarchives and simulated
+case-insensitive alias collision before fixes. Ten contract tests pass.
+Replayed the new gate against all eight downloaded Streaming Media archives
+from run 45566510651 and the Framerot binary from run 45577168933:
+all nine passed, SHA-256 bytes unchanged. Native Windows/macOS execution
+of the rename remains unqualified; source archive structural inspection,
+self-testing workflow and reusable SDK provisioning remain next.
+No callers changed or pushed.
