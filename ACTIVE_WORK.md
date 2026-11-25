@@ -50,3 +50,23 @@ module name and verified binary contents; verified archive is renamed and
 checksum manifest rewritten after the original integrity gate. Contract
 regressions 4/4 passed. Next caller revision pins this change; old run
 artifacts retain their existing names. Hosted naming qualification pending.
+
+## Qualified artifact handoff (2026-11-25)
+
+Streaming Media branch ci/shared-plugin-build, commit 875f6b1, hosted run
+45566510651 completed all eight jobs successfully. Downloaded all eight
+artifacts to its ignored build/ci-artifact-audit.EdpbBG directory. Every
+outer artifact has the streaming-media-source public name, exactly one
+matching inner archive and SHA256SUMS. All eight SHA-256 digests matched.
+All ZIPs passed integrity tests. Inspected archive contents: three files
+per Linux/Windows archive (module and two license files), five per macOS
+bundle (module, two licenses, Info.plist and ad-hoc signature resources).
+OBS32 Linux/Windows legacy and OBS33 modern layout confirmed. No actual
+cross-platform runtime install or playback claimed. Public naming and
+shared artifact contract are qualified; no merge performed.
+
+Next caller remains Framerot, from clean framerot-release. emuLens-release
+and obs-retro-effects are also clean. HyperShader has 12 unpublished
+commits, Timeline one, Aftermarket checkout 19 and a modified source
+file; isolate future CI work from those changes. No other caller adopted
+the shared workflow yet.
