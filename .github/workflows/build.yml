@@ -7,6 +7,11 @@ on:
         description: Installed OBS module name
         required: true
         type: string
+      package-name:
+        description: Public archive and artifact name (defaults to module)
+        required: false
+        type: string
+        default: ""
       minimum-tests:
         description: Minimum Linux regression test count
         required: true
@@ -66,9 +71,11 @@ jobs:
     timeout-minutes: 45
     env:
       MODULE: ${{ inputs.module }}
+      PUBLIC_NAME: ${{ inputs.package-name || inputs.module }}
       MINIMUM_TESTS: ${{ inputs.minimum-tests }}
       OBS_VERSION: ${{ matrix.obs }}
       ARCHIVE: ${{ format('{0}-{1}-obs{2}-test.{3}', inputs.module, matrix.target, matrix.obs, matrix.extension) }}
+      PUBLIC_ARCHIVE: ${{ format('{0}-{1}-obs{2}-test.{3}', inputs.package-name || inputs.module, matrix.target, matrix.obs, matrix.extension) }}
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,6 +85,7 @@ jobs:
         shell: bash
         run: |
           [[ "$MODULE" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
+          [[ "$PUBLIC_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
           [[ "$MINIMUM_TESTS" =~ ^[1-9][0-9]*$ ]]
       - name: Check README links and verifier tests
         if: runner.os == 'Linux'
@@ -124,6 +132,13 @@ jobs:
           expected = digest + "  " + archive.name + "\n"
           if checksums.read_text(encoding="utf-8") != expected:
               raise SystemExit("Archive name or SHA-256 mismatch")
+          public = work / os.environ["PUBLIC_ARCHIVE"]
+          if public != archive:
+              if public.exists() or public.is_symlink():
+                  raise SystemExit("Public archive already exists")
+              archive.rename(public)
+              expected = digest + "  " + public.name + "\n"
+              checksums.write_text(expected, encoding="utf-8", newline="\n")
           if os.getenv("GITHUB_STEP_SUMMARY"):
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
                   summary.write("### Verified module-only test package\n\n```\n" + expected + "```\n")
@@ -131,9 +146,9 @@ jobs:
       - name: Upload verified test package
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: ${{ inputs.module }}-${{ matrix.target }}-obs${{ matrix.obs }}-test
+          name: ${{ inputs.package-name || inputs.module }}-${{ matrix.target }}-obs${{ matrix.obs }}-test
           path: |
-            ${{ runner.temp }}/plugin-ci/${{ env.ARCHIVE }}
+            ${{ runner.temp }}/plugin-ci/${{ env.PUBLIC_ARCHIVE }}
             ${{ runner.temp }}/plugin-ci/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

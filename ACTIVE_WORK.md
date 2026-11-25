@@ -40,3 +40,13 @@ and supplemental artifacts without weakening exact payload verification.
 HyperShader and Timeline local checkouts have unpublished commits; do
 not sweep those into a CI migration. emuLens-release is clean but uses
 template packaging with plugin-specific GPU tests and resources.
+
+## Public package naming
+
+Owner requests streaming-media-source instead of obs-streaming-media for
+public names. Run 45558327793 completed all eight jobs and returned eight
+artifacts via the Actions API. Added optional package-name input, preserving
+module name and verified binary contents; verified archive is renamed and
+checksum manifest rewritten after the original integrity gate. Contract
+regressions 4/4 passed. Next caller revision pins this change; old run
+artifacts retain their existing names. Hosted naming qualification pending.

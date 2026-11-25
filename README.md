@@ -29,6 +29,10 @@ layout and archive integrity, and produce precisely:
 
 Targets: linux-x86_64, windows-x64, macos-arm64, macos-x86_64.
 The SHA-256 file contains exactly one digest plus the archive filename.
+The optional `package-name` input controls public archive and artifact names
+independently of the installed module identity. The verified archive is renamed
+without changing its bytes, and the checksum manifest is updated to match.
+Omitting the input preserves the module-based name.
 No logs, credentials, scenes, SDKs, bundled runtime executables or raw
 build directories are uploaded. Artifact retention is 14 days, and
 artifacts are explicitly test packages, not release binaries. On a public
@@ -39,7 +43,8 @@ caller repository, assume artifacts are externally downloadable.
 Streaming Media now calls the published workflow pinned at
 `db6c0a2495456274ecf91f18fc83dd64dc6d29e8`. Its temporary local copy has
 been removed. [Hosted pilot run](https://github.com/myrqyry/streaming-media-source/actions/runs/45558327793)
-has started all eight jobs; upload results remain unqualified.
+completed all eight jobs and produced eight non-expired artifacts. The original
+run uses module-based names; the next caller revision selects the public name.
 
 Example caller (requires the verifier contract above):
 
@@ -49,6 +54,7 @@ jobs:
     uses: myrqyry/obs-plugin-ci/.github/workflows/build.yml@db6c0a2495456274ecf91f18fc83dd64dc6d29e8
     with:
       module: obs-streaming-media
+      package-name: streaming-media-source
       minimum-tests: 9
 ```
 
