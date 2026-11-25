@@ -48,3 +48,4 @@ jobs:
           cargo +1.93.1 build --locked
           python tests/test_rust_parity.py
           python tests/test_qualification.py
+          python tests/test_engine_bundle.py

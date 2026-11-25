@@ -182,8 +182,9 @@ signature validity or the actual OBS version used to build the binary.
 
 The manually dispatched **Qualify Rust CI fixture** workflow
 (.github/workflows/qualify.yml) calls rust-fixture.yml at the same
-repository revision. Every job checks out that run's commit and builds
-the locked engine with Rust 1.93.1. Optional targets and obs-versions
+repository revision. Every job checks out that run's commit. The planner builds the locked
+Linux engine with Rust 1.93.1; selected Windows and macOS targets build
+their own engine once each. Optional targets and obs-versions
 inputs use the same validated matrix planner; default is all eight
 platform/layout combinations.
 
@@ -207,5 +208,15 @@ Local reproduction (Linux example):
 This is a synthetic fixture only: no OBS SDK, plugin registration,
 runtime module loading, ABI validation, external caller qualification or
 release publication. The existing production build.yml is unchanged.
-The fixture compiles the engine on each runner for revision fidelity;
-revision-pinned binary distribution is a subsequent optimization.
+The engine is transferred through same-run GitHub artifacts named by
+the checkout SHA and platform. Each consumer validates exact bundle contents,
+revision, host target, Cargo.lock digest, Rust toolchain version, size and
+SHA-256 before restoring executable permissions and invoking it. The
+collector reuses the Linux engine without installing Rust. Full qualification
+therefore compiles four engines instead of ten; Linux-only qualification
+compiles one instead of four. These are planned build counts, not measured
+speedups. Linux uses the Ubuntu 24.04 engine on 26.04 as well, pending hosted
+confirmation. The receipt checks integrity and identity within the trusted
+same-run build; it is not a signature or independent provenance attestation.
+For a clean retry, start a fresh dispatch rather than re-uploading existing
+immutable artifacts. No release distribution or external caller integration.

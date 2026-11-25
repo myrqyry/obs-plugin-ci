@@ -235,3 +235,27 @@ so narrowly excluded this known false positive for the combined lint.
 No hosted fixture run yet; no push. Next: hosted qualification when
 authorized, revision-pinned executable distribution and common SDK
 provisioning based on actual callers.
+
+## Same-run revision-pinned engine transport
+
+Qualification now compiles the Linux engine once in the plan job and
+one engine per selected non-Linux architecture, not per OBS version.
+Producer packages exact binary + ENGINE.json; artifact name includes
+run checkout SHA and target. Consumer checks checkout HEAD, host platform,
+Cargo.lock digest, pinned Rust version, file size and SHA-256 before
+restoring executable permissions. No release or cross-run artifact trust.
+Linux collector reuses the plan engine without installing Rust.
+The full matrix compiles four engines instead of ten; Linux-only one
+instead of four. Additional engine-build jobs and artifact transfers
+mean elapsed time improvement is not yet measured. Ubuntu24 engine on
+Ubuntu26 and all non-Linux hosted paths remain to be qualified.
+
+Two engine-bundle test methods exercise deduplication, wrong target/revision,
+mutated receipt fields, extra files, changed bytes and no overwrite.
+All 30 test methods, fmt, Clippy, release build and actionlint passed
+(same documented macos-26-intel lint exception). Actual Linux workflow
+plan, bundle, simulated download with stripped mode, two fixture builds
+and collector shell blocks passed using one release executable. Fresh
+dispatch required for clean retry rather than replacing immutable uploads.
+Existing production build.yml unchanged; no push. Next: hosted fixture
+qualification, shared SDK provisioning/caching based on caller evidence.
