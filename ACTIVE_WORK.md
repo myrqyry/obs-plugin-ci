@@ -208,3 +208,30 @@ Eleven Rust tests, three parity tests, 12 workflow tests, formatting,
 Clippy and release build passed. No production workflow changes or push.
 Next: synthetic workflow-call fixture, revision-pinned executable
 distribution, then SDK provisioning/caching.
+
+## Rust workflow qualification fixture
+
+Added manually dispatched qualify.yml calling local rust-fixture.yml at
+the same revision. Rust planner selects all eight qualified layouts by
+default or validated target/version subsets; source host chosen exactly
+once when Linux is selected. Each job builds the locked engine at the
+run's SHA, compiles a synthetic Rust cdylib, packages it, runs handoff and
+native inspection, uploads exact binary/source archives and receipts.
+Collector downloads the full fixture set, checks exact directories/files,
+recalculates native and source receipts, rejects mismatches and writes
+qualification.json. No actual OBS SDK linkage, runtime load or production
+caller change; explicit synthetic-fixture-only report scope.
+
+Red/green local fixture tests include both native OBS layouts, tampered
+receipts, unexpected files, changed binary bytes, full/filtered source host
+selection. Actual reusable workflow plan/build/collect run blocks replayed
+locally on Linux with a simulated artifact download (directory copy);
+both layouts and exact source/binary hashes pass. Full suite: 11 Rust,
+12 workflow, three parity, two qualification tests (28 methods), fmt,
+Clippy, release build and diff check passed. actionlint v1.7.11 accepts
+both new workflows; existing ci.yml only flags macos-26-intel as unknown,
+verified real successful GitHub job 139042519813 uses that exact label,
+so narrowly excluded this known false positive for the combined lint.
+No hosted fixture run yet; no push. Next: hosted qualification when
+authorized, revision-pinned executable distribution and common SDK
+provisioning based on actual callers.

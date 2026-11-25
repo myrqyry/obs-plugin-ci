@@ -1,0 +1,140 @@
+name: Reusable Rust fixture qualification
+
+# Same-repository fixture only. This is not a production OBS build workflow.
+on:
+  workflow_call:
+    inputs:
+      targets:
+        type: string
+        default: ""
+      obs-versions:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Build qualification engine
+        shell: bash
+        run: |
+          rustup toolchain install 1.93.1 --profile minimal
+          cargo +1.93.1 build --release --locked
+      - name: Plan fixture matrix
+        id: plan
+        shell: bash
+        env:
+          TARGETS: ${{ inputs.targets }}
+          VERSIONS: ${{ inputs.obs-versions }}
+        run: |
+          matrix=$(python scripts/qualify.py plan --targets "$TARGETS" --obs-versions "$VERSIONS")
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    name: Fixture ${{ matrix.label }} / OBS layout ${{ matrix.obs }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      TARGET: ${{ matrix.target }}
+      OBS_VERSION: ${{ matrix.obs }}
+      EXTENSION: ${{ matrix.extension }}
+      EMIT_SOURCE: ${{ matrix.emit_source }}
+      ARTIFACT: ${{ format('rust-fixture-{0}-obs{1}-test', matrix.target, matrix.obs) }}
+      RUSTUP_TOOLCHAIN: "1.93.1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Build qualification engine
+        shell: bash
+        run: |
+          rustup toolchain install 1.93.1 --profile minimal
+          cargo +1.93.1 build --release --locked
+      - name: Compile and verify synthetic module
+        shell: bash
+        run: |
+          args=()
+          if [ "$EMIT_SOURCE" = true ]; then args+=(--emit-source); fi
+          python scripts/qualify.py build --work "$RUNNER_TEMP/rust-fixture" \
+            --target "$TARGET" --obs-version "$OBS_VERSION" "${args[@]}"
+      - name: Upload fixture binary and receipt
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: |
+            ${{ runner.temp }}/rust-fixture/${{ env.ARTIFACT }}/${{ env.ARTIFACT }}.${{ env.EXTENSION }}
+            ${{ runner.temp }}/rust-fixture/${{ env.ARTIFACT }}/SHA256SUMS
+            ${{ runner.temp }}/rust-fixture/${{ env.ARTIFACT }}/MODULE-RECEIPT.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Upload fixture source and receipt
+        if: matrix.emit_source
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rust-fixture-source
+          path: |
+            ${{ runner.temp }}/rust-fixture/rust-fixture-source/rust-fixture-source.tar.gz
+            ${{ runner.temp }}/rust-fixture/rust-fixture-source/SHA256SUMS
+            ${{ runner.temp }}/rust-fixture/rust-fixture-source/PAYLOAD-SHA256SUMS
+            ${{ runner.temp }}/rust-fixture/rust-fixture-source/SOURCE-RECEIPT.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  collect:
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Build qualification engine
+        shell: bash
+        run: |
+          rustup toolchain install 1.93.1 --profile minimal
+          cargo +1.93.1 build --release --locked
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: rust-fixture-*
+          path: ${{ runner.temp }}/fixture-downloads
+      - name: Reverify all downloaded artifacts
+        shell: bash
+        env:
+          MATRIX_JSON: ${{ needs.plan.outputs.matrix }}
+        run: |
+          python scripts/qualify.py collect --downloads "$RUNNER_TEMP/fixture-downloads" \
+            --matrix-json "$MATRIX_JSON" --output "$RUNNER_TEMP/qualification.json"
+      - name: Upload qualification report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rust-qualification-report
+          path: ${{ runner.temp }}/qualification.json
+          if-no-files-found: error
+          retention-days: 14

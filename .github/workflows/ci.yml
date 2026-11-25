@@ -39,9 +39,12 @@ jobs:
         run: rustup toolchain install 1.93.1 --profile minimal --component rustfmt --component clippy
       - name: Check Rust CLI
         shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: "1.93.1"
         run: |
           cargo +1.93.1 fmt --check
           cargo +1.93.1 test --locked
           cargo +1.93.1 clippy --locked --all-targets -- -D warnings
           cargo +1.93.1 build --locked
           python tests/test_rust_parity.py
+          python tests/test_qualification.py

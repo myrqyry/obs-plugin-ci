@@ -1,0 +1,23 @@
+name: Qualify Rust CI fixture
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: Comma-separated platform targets (empty for all)
+        type: string
+        default: ""
+      obs-versions:
+        description: Comma-separated OBS layout versions (empty for all)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    uses: ./.github/workflows/rust-fixture.yml
+    with:
+      targets: ${{ inputs.targets }}
+      obs-versions: ${{ inputs.obs-versions }}

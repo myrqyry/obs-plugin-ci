@@ -177,3 +177,35 @@ linked libraries without executing code. The module inspection limit is
 128 MiB; universal Mach-O is not supported yet. Static inspection does not
 establish runtime loadability, ABI compatibility, dependency resolution,
 signature validity or the actual OBS version used to build the binary.
+
+### Synthetic qualification workflow
+
+The manually dispatched **Qualify Rust CI fixture** workflow
+(.github/workflows/qualify.yml) calls rust-fixture.yml at the same
+repository revision. Every job checks out that run's commit and builds
+the locked engine with Rust 1.93.1. Optional targets and obs-versions
+inputs use the same validated matrix planner; default is all eight
+platform/layout combinations.
+
+Each leg compiles a tiny native Rust shared library exporting three
+OBS-named symbols, packages it in the selected install layout, performs
+verified handoff and native inspection, then uploads the archive, SHA-256
+manifest and module receipt. The selected Linux leg also emits source
+and cross-verifies its binary payload. A final Linux job downloads the
+complete fixture artifact set, checks exact membership and independently
+recomputes every receipt before uploading qualification.json.
+
+Local reproduction (Linux example):
+
+    cargo build --release --locked
+    matrix=$(python3 scripts/qualify.py plan --targets linux-x86_64)
+    work=$(mktemp -d)
+    python3 scripts/qualify.py build --work "$work/downloads" --target linux-x86_64 --obs-version 32.2.0 --emit-source
+    python3 scripts/qualify.py build --work "$work/downloads" --target linux-x86_64 --obs-version 33.0.3
+    python3 scripts/qualify.py collect --downloads "$work/downloads" --matrix-json "$matrix" --output "$work/qualification.json"
+
+This is a synthetic fixture only: no OBS SDK, plugin registration,
+runtime module loading, ABI validation, external caller qualification or
+release publication. The existing production build.yml is unchanged.
+The fixture compiles the engine on each runner for revision fidelity;
+revision-pinned binary distribution is a subsequent optimization.
