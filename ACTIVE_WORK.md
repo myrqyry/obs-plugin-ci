@@ -91,3 +91,13 @@ both new shared gates, and all seven binary payload file digests matched.
 The new hosted run must complete the real build and all 18 native tests;
 verify both uploaded archives and receipts before merging. Codec-only
 Windows/macOS qualification workflow unchanged. No other plugin migrated.
+
+## Framerot hosted qualification (2026-11-25)
+
+Run 45577168933 at caller 1dbe750, shared afeed74, succeeded on
+Linux x86_64 / OBS 32.2.0 with all 18 native tests passing. Downloaded
+both artifacts to /tmp/framerot-hosted-audit.odZZKx: exact outer/inner
+file sets, matching SHA256SUMS, all seven installed-file digests match
+PAYLOAD-SHA256SUMS, and the source tar contains all 63 tracked file
+paths and no extras. No Windows/macOS full plugin qualification or
+runtime OBS installation claimed. No merge performed.
