@@ -164,3 +164,25 @@ pinned Rust 1.93.1 checks across the four runner families. Python workflow
 remains authoritative. Rust source-package and rename support, composable
 selectors and deterministic source host, qualification fixture, and pinned
 tool distribution remain open. No publishing or caller migration.
+
+## Rust source audit and matrix filters
+
+Extended obs-ci plan with validated comma-separated targets and pinned OBS
+versions. Existing row ordering/fields retained; additive emit_source selects
+exactly one Linux job in catalog order, including OBS33-only plans. Reject
+unsupported/duplicate selectors, empty intersections and source without Linux.
+No claim that arbitrary selections are qualified for a specific plugin.
+
+Added read-only audit-source with source structure and manifest validation
+plus optional exact binary payload hash cross-check. Shared archive parser
+now hashes/inspects using the same open file handle. Actual Git-generated
+Framerot source exposed global PAX comment header; added regression coverage
+and limited acceptance to a single leading comment-only header, rejecting
+global path overrides. Real hosted source passes with 63 regular files,
+11 directories, seven installed hashes verified against the actual binary.
+Five Rust tests, three Python/Rust compatibility tests (including 38 prior
+cases plus two PAX cases), 12 existing Python tests, formatting, Clippy and
+release build passed. Production workflow still uses Python; new selectors
+and source auditor are local tooling until hosted qualification. Next:
+safe package rename and synthetic workflow-call fixture, followed by
+revision-pinned executable distribution and SDK provisioning.

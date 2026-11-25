@@ -27,9 +27,21 @@ enum Command {
         driver: String,
         #[arg(long)]
         source_package: bool,
+        /// Restrict to comma-separated supported platform targets.
+        #[arg(long, value_delimiter = ',')]
+        targets: Vec<String>,
+        /// Restrict to comma-separated pinned OBS versions.
+        #[arg(long, value_delimiter = ',')]
+        obs_versions: Vec<String>,
     },
     /// Read-only binary archive and adjacent SHA256SUMS verification.
     Audit { archive: PathBuf },
+    /// Verify source archive and payload manifest; optionally compare an actual binary package.
+    AuditSource {
+        archive: PathBuf,
+        #[arg(long)]
+        binary: Option<PathBuf>,
+    },
 }
 
 fn run(command: Command) -> Result<(), Box<dyn Error>> {
@@ -41,6 +53,8 @@ fn run(command: Command) -> Result<(), Box<dyn Error>> {
             profile,
             driver,
             source_package,
+            targets,
+            obs_versions,
         } => {
             println!(
                 "{}",
@@ -51,7 +65,14 @@ fn run(command: Command) -> Result<(), Box<dyn Error>> {
                     &profile,
                     &driver,
                     source_package,
+                    (&targets, &obs_versions),
                 )?)?
+            );
+        }
+        Command::AuditSource { archive, binary } => {
+            println!(
+                "{}",
+                serde_json::to_string(&audit::audit_source(&archive, binary.as_deref())?)?
             );
         }
         Command::Audit { archive } => {

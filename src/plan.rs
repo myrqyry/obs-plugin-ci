@@ -7,6 +7,7 @@ pub struct Row {
     runner: &'static str,
     obs: &'static str,
     extension: &'static str,
+    emit_source: bool,
 }
 
 #[derive(Serialize)]
@@ -27,6 +28,7 @@ pub fn plan(
     profile: &str,
     driver: &str,
     source_package: bool,
+    selection: (&[String], &[String]),
 ) -> Result<Matrix, String> {
     for (key, name) in [
         ("MODULE", module),
@@ -59,6 +61,22 @@ pub fn plan(
     if source_package && driver != "caller" {
         return Err("Source packages require a caller-owned verifier".into());
     }
+    let (targets, versions) = selection;
+    for (kind, values, allowed) in [
+        (
+            "target",
+            targets,
+            &["linux-x86_64", "windows-x64", "macos-arm64", "macos-x86_64"][..],
+        ),
+        ("OBS version", versions, &["32.2.0", "33.0.3"][..]),
+    ] {
+        let mut seen = std::collections::BTreeSet::new();
+        for value in values {
+            if !allowed.contains(&value.as_str()) || !seen.insert(value) {
+                return Err(format!("Invalid or duplicate {kind}: {value}"));
+            }
+        }
+    }
     let mut include = Vec::new();
     for (obs, linux_runner) in [("32.2.0", "ubuntu-24.04"), ("33.0.3", "ubuntu-26.04")] {
         for (target, label, runner, extension) in [
@@ -70,14 +88,30 @@ pub fn plan(
             if profile == "linux-obs32" && (target != "linux-x86_64" || obs != "32.2.0") {
                 continue;
             }
+            if (!targets.is_empty() && !targets.iter().any(|v| v == target))
+                || (!versions.is_empty() && !versions.iter().any(|v| v == obs))
+            {
+                continue;
+            }
             include.push(Row {
                 target,
                 label,
                 runner,
                 obs,
                 extension,
+                emit_source: false,
             });
         }
+    }
+    if include.is_empty() {
+        return Err("Matrix selection is empty".into());
+    }
+    if source_package {
+        let host = include
+            .iter_mut()
+            .find(|r| r.target == "linux-x86_64")
+            .ok_or("Source packages require a Linux matrix target")?;
+        host.emit_source = true;
     }
     Ok(Matrix { include })
 }

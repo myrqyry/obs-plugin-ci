@@ -2,10 +2,10 @@ use flate2::read::MultiGzDecoder;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fs::{self, File},
-    io::{self, Read},
+    io::{self, Read, Seek, SeekFrom},
     path::Path,
 };
 
@@ -25,6 +25,8 @@ struct Members {
     entries: BTreeMap<String, bool>,
     spellings: BTreeMap<String, String>,
     nonempty_files: usize,
+    hashes: BTreeMap<String, String>,
+    nonempty_paths: BTreeSet<String>,
 }
 
 impl Members {
@@ -67,6 +69,7 @@ impl Members {
         }
         if !directory && size > 0 {
             self.nonempty_files += 1;
+            self.nonempty_paths.insert(name.to_owned());
         }
         Ok(())
     }
@@ -94,7 +97,7 @@ fn regular_file(path: &Path) -> Result<File> {
     Ok(File::open(path)?)
 }
 
-fn digest(file: &mut File) -> Result<String> {
+fn digest(file: &mut impl Read) -> Result<String> {
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
@@ -107,7 +110,7 @@ fn digest(file: &mut File) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-pub fn audit(path: &Path) -> Result<Receipt> {
+fn inspect(path: &Path, source: bool, hash_members: bool) -> Result<(Receipt, Members)> {
     let name = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -120,9 +123,13 @@ pub fn audit(path: &Path) -> Result<Receipt> {
     if manifest.replace("\r\n", "\n") != format!("{sha256}  {name}\n") {
         return Err("Archive name or SHA-256 mismatch".into());
     }
+    file.seek(SeekFrom::Start(0))?;
     let mut members = Members::default();
+    if source && !name.ends_with("-source.tar.gz") {
+        return Err("Expected a -source.tar.gz package".into());
+    }
     if name.ends_with(".zip") {
-        let mut package = zip::ZipArchive::new(regular_file(path)?)?;
+        let mut package = zip::ZipArchive::new(file)?;
         if package.has_duplicate_names() {
             return Err("Duplicate ZIP member names".into());
         }
@@ -137,20 +144,51 @@ pub fn audit(path: &Path) -> Result<Receipt> {
             }
             members.add(&member_name, directory, entry.size())?;
             // Reading every member verifies its decompression and CRC.
-            io::copy(&mut entry, &mut io::sink())?;
+            if hash_members && !directory {
+                members.hashes.insert(member_name, digest(&mut entry)?);
+            } else {
+                io::copy(&mut entry, &mut io::sink())?;
+            }
         }
     } else if name.ends_with(".tar.gz") {
-        let decoder = MultiGzDecoder::new(regular_file(path)?);
+        let decoder = MultiGzDecoder::new(file);
         let mut package = tar::Archive::new(decoder);
+        let mut global_header_seen = false;
         for entry in package.entries()? {
             let mut entry = entry?;
             let kind = entry.header().entry_type();
+            if kind.is_pax_global_extensions() {
+                // Git archive emits a leading global comment with its commit ID.
+                // Do not permit metadata that changes member paths, sizes or types.
+                if global_header_seen || !members.entries.is_empty() || entry.size() > 4096 {
+                    return Err("Unexpected global PAX header".into());
+                }
+                global_header_seen = true;
+                let extensions = entry.pax_extensions()?.ok_or("Missing PAX metadata")?;
+                let mut comment_seen = false;
+                for extension in extensions {
+                    let extension = extension?;
+                    if extension.key_bytes() != b"comment" || comment_seen {
+                        return Err("Unsupported global PAX metadata".into());
+                    }
+                    comment_seen = true;
+                }
+                if !comment_seen {
+                    return Err("Empty global PAX metadata".into());
+                }
+                continue;
+            }
+
             let member_name = std::str::from_utf8(&entry.path_bytes())?.to_owned();
             if !(kind.is_file() || kind.is_dir()) {
                 return Err(format!("Unsupported tar member type: {member_name:?}").into());
             }
             members.add(&member_name, kind.is_dir(), entry.size())?;
-            io::copy(&mut entry, &mut io::sink())?;
+            if hash_members && kind.is_file() {
+                members.hashes.insert(member_name, digest(&mut entry)?);
+            } else {
+                io::copy(&mut entry, &mut io::sink())?;
+            }
         }
         // Drain the decoder so a bad/truncated gzip footer cannot pass.
         io::copy(&mut package.into_inner(), &mut io::sink())?;
@@ -163,11 +201,135 @@ pub fn audit(path: &Path) -> Result<Receipt> {
         .values()
         .filter(|&&directory| directory)
         .count();
-    Ok(Receipt {
-        archive: name.into(),
-        sha256,
-        bytes,
-        regular_files: members.entries.len() - directories,
-        directories,
+    Ok((
+        Receipt {
+            archive: name.into(),
+            sha256,
+            bytes,
+            regular_files: members.entries.len() - directories,
+            directories,
+        },
+        members,
+    ))
+}
+
+pub fn audit(path: &Path) -> Result<Receipt> {
+    Ok(inspect(path, false, false)?.0)
+}
+
+#[derive(Serialize)]
+pub struct SourceReceipt {
+    #[serde(flatten)]
+    archive: Receipt,
+    payload_entries: usize,
+    payload_verified: bool,
+}
+
+fn compiled_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if [
+        ".so", ".dll", ".dylib", ".exe", ".pdb", ".o", ".obj", ".a", ".lib", ".pyc",
+    ]
+    .iter()
+    .any(|suffix| lower.ends_with(suffix))
+    {
+        return true;
+    }
+    lower.rsplit_once(".so.").is_some_and(|(_, version)| {
+        version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    })
+}
+
+fn license_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["license", "copying"].iter().any(|prefix| {
+        lower == *prefix
+            || lower
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.len() > 1 && suffix.starts_with(['.', '_', '-']))
+    })
+}
+
+fn payload_manifest(path: &Path) -> Result<BTreeMap<String, String>> {
+    let mut content = String::new();
+    regular_file(path)?.read_to_string(&mut content)?;
+    let mut entries = BTreeMap::new();
+    for line in content.lines() {
+        let (hash, name) = line
+            .split_once("  ")
+            .ok_or("Invalid payload checksum manifest")?;
+        if hash.len() != 64
+            || !hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("Invalid payload checksum digest".into());
+        }
+        if name.trim().is_empty()
+            || name.split('/').any(|p| matches!(p, "" | "." | ".."))
+            || name
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '\\' | ':'))
+        {
+            return Err(format!("Unsafe payload checksum path: {name:?}").into());
+        }
+        if entries.insert(name.to_owned(), hash.to_owned()).is_some() {
+            return Err(format!("Duplicate payload checksum path: {name:?}").into());
+        }
+    }
+    if entries.is_empty() {
+        return Err("Empty payload checksum manifest".into());
+    }
+    Ok(entries)
+}
+
+pub fn audit_source(path: &Path, binary: Option<&Path>) -> Result<SourceReceipt> {
+    let (receipt, members) = inspect(path, true, false)?;
+    let roots: BTreeSet<_> = members
+        .entries
+        .keys()
+        .map(|name| name.split('/').next().unwrap())
+        .collect();
+    if roots.len() != 1 {
+        return Err("Source archive must have one root".into());
+    }
+    for (name, directory) in &members.entries {
+        if !directory && (!name.contains('/') || compiled_file(name)) {
+            return Err(format!("Unexpected source file: {name:?}").into());
+        }
+    }
+    if !members.nonempty_paths.iter().any(|name| {
+        name.split_once('/')
+            .is_some_and(|(_, relative)| !relative.contains('/') && license_file(relative))
+    }) {
+        return Err("Source archive missing root LICENSE or COPYING".into());
+    }
+    let expected = payload_manifest(&path.with_file_name("PAYLOAD-SHA256SUMS"))?;
+    if let Some(binary) = binary {
+        let (_, installed) = inspect(binary, false, true)?;
+        if expected != installed.hashes {
+            let missing: Vec<_> = expected
+                .keys()
+                .filter(|k| !installed.hashes.contains_key(*k))
+                .collect();
+            let extra: Vec<_> = installed
+                .hashes
+                .keys()
+                .filter(|k| !expected.contains_key(*k))
+                .collect();
+            let changed: Vec<_> = expected
+                .iter()
+                .filter(|(k, v)| installed.hashes.get(*k).is_some_and(|actual| actual != *v))
+                .map(|(k, _)| k)
+                .collect();
+            return Err(format!("Payload manifest mismatch: missing={missing:?}, extra={extra:?}, changed={changed:?}").into());
+        }
+    }
+    Ok(SourceReceipt {
+        archive: receipt,
+        payload_entries: expected.len(),
+        payload_verified: binary.is_some(),
     })
 }

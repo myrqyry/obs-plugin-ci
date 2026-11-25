@@ -58,8 +58,12 @@ class Parity(unittest.TestCase):
                     rust = subprocess.run(args, capture_output=True)
                     self.assertEqual(py.returncode == 0, rust.returncode == 0, rust.stderr)
                     if py.returncode == 0:
-                        self.assertEqual(json.loads(output.read_text(encoding="utf-8").split("=", 1)[1]),
-                                         json.loads(rust.stdout))
+                        expected = json.loads(output.read_text(encoding="utf-8").split("=", 1)[1])
+                        selected = False
+                        for row in expected["include"]:
+                            row["emit_source"] = source and not selected and row["target"] == "linux-x86_64"
+                            selected = selected or row["emit_source"]
+                        self.assertEqual(expected, json.loads(rust.stdout))
 
     def test_binary_archive_gates(self):
         step = next(s for s in WORKFLOW["jobs"]["build"]["steps"]
@@ -110,6 +114,31 @@ class Parity(unittest.TestCase):
                         self.assertEqual(py.returncode == 0, accepted, py.stderr)
                         self.assertEqual(rust.returncode == 0, accepted, rust.stderr)
                         self.assertEqual(archive.read_bytes(), original)
+
+    def test_git_style_source_metadata(self):
+        for headers, accepted in [
+            ({"comment": "1dbe750f5551046837165fc920138e442842083a"}, True),
+            ({"path": "../outside"}, False),
+        ]:
+            with self.subTest(headers=headers):
+                with tempfile.TemporaryDirectory() as temp:
+                    source = Path(temp) / "example-source.tar.gz"
+                    with tarfile.open(source, "w:gz", format=tarfile.PAX_FORMAT,
+                                      pax_headers=headers) as package:
+                        for name, content in [("example/COPYING", b"license"),
+                                              ("example/main.c", b"code")]:
+                            entry = tarfile.TarInfo(name)
+                            entry.size = len(content)
+                            package.addfile(entry, io.BytesIO(content))
+                    (source.parent / "SHA256SUMS").write_text(
+                        hashlib.sha256(source.read_bytes()).hexdigest() + "  " + source.name + "\n",
+                        encoding="utf-8")
+                    (source.parent / "PAYLOAD-SHA256SUMS").write_text(
+                        "a" * 64 + "  example/bin/plugin.so\n", encoding="utf-8")
+                    result = subprocess.run([str(EXE), "audit-source", str(source)], capture_output=True)
+                    self.assertEqual(result.returncode == 0, accepted, result.stderr)
+                    if accepted:
+                        self.assertFalse(json.loads(result.stdout)["payload_verified"])
 
 
 if __name__ == "__main__":

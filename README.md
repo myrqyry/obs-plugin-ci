@@ -117,10 +117,31 @@ CI contract. Build it locally with Rust 1.93.1 (the toolchain tested here):
 
 On Windows use target/release/obs-ci.exe. The plan command accepts the
 current full and linux-obs32 profiles, driver and source-package options,
-and outputs the existing workflow's matrix JSON. Audit is read-only:
+and optional comma-separated target and pinned OBS-version filters:
+
+    ./target/release/obs-ci plan --module framerot --minimum-tests 18 --driver caller --source-package --targets linux-x86_64,windows-x64 --obs-versions 33.0.3
+
+Matrix output retains the existing row fields and adds emit_source. Exactly
+one selected Linux row hosts a requested source package, preferring the first
+row in catalog order. Empty or unsupported selections and source requests
+without Linux are rejected. Selection is a planning capability, not proof
+that a particular plugin has been qualified on those targets. Audit is read-only:
 it checks the adjacent SHA256SUMS, ZIP or tar/gzip integrity, safe member
 paths and types, duplicate/case-colliding names, and basic payload exclusions.
 It prints a JSON receipt with archive name, SHA-256, size and file counts.
+For source packages:
+
+    ./target/release/obs-ci audit-source /path/to/plugin-source.tar.gz --binary /path/to/plugin-test.tar.gz
+
+The source gate checks a single root, nonempty root license, safe member
+paths/types, common compiled-file exclusions and the adjacent
+PAYLOAD-SHA256SUMS. Leading comment-only Git PAX metadata is accepted;
+global path/size overrides are rejected. With --binary, the auditor
+independently checks the binary archive and matches every regular-file
+path and SHA-256 against the payload manifest, rejecting missing, extra
+or changed files. Without --binary, payload_verified is false; only the
+source archive and manifest structure have been checked. This is not a
+full license-compliance or tracked-source provenance audit.
 
 Run the Rust tests and the cross-implementation parity suite:
 
@@ -130,7 +151,7 @@ Run the Rust tests and the cross-implementation parity suite:
     cargo clippy --locked --all-targets -- -D warnings
 
 The existing Python workflow remains authoritative; the Rust tool does
-not yet implement source-package verification, public renaming, SDK
+not yet implement public renaming, SDK
 provisioning, caller builds, or publication. No caller needs Rust today.
 Self-CI checks both implementations on all four runner families; hosted
 qualification remains pending. The dependency lockfile is committed.
