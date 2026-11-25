@@ -4,6 +4,7 @@ import io
 import tarfile
 import zipfile
 import stat
+import sys
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/build.yml"
+
+def shell_command(step):
+    script = step["run"]
+    if os.name == "nt" and script.startswith("python3 - "):
+        script = script.replace("python3 - ", "python - ", 1)
+    return ["bash", "-c", script]
+
 
 def make_archive(path, entries=(("example/bin/plugin.so", b"module"),)):
     if path.suffix == ".zip":
@@ -30,7 +38,9 @@ def make_archive(path, entries=(("example/bin/plugin.so", b"module"),)):
 
 class Contract(unittest.TestCase):
     def setUp(self):
-        self.workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+        from unittest.mock import patch
+        self.enterContext(patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}))
+        self.workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         self.job = self.workflow["jobs"]["build"]
         self.steps = self.job["steps"]
 
@@ -42,10 +52,23 @@ class Contract(unittest.TestCase):
             env={**os.environ,"PROFILE":profile,"DRIVER":driver,
                  "SOURCE_PACKAGE":source,"GITHUB_OUTPUT":str(output),
                  "MODULE":"example","PUBLIC_NAME":"example","MINIMUM_TESTS":"1", **inputs}
-            result=subprocess.run(["bash","-c",step["run"]],env=env,capture_output=True)
+            result=subprocess.run(shell_command(step),env=env,capture_output=True)
             if result.returncode:
                 return None
             return json.loads(output.read_text().strip().split("=",1)[1])["include"]
+
+    def test_workflow_permissions_and_action_pins(self):
+        for path in WORKFLOW.parent.glob("*.yml"):
+            workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+            with self.subTest(workflow=path.name):
+                self.assertEqual(workflow["permissions"], {"contents": "read"})
+                for job in workflow["jobs"].values():
+                    self.assertNotIn("permissions", job)
+                    for step in job.get("steps", []):
+                        if "uses" in step:
+                            self.assertRegex(step["uses"], r"@[a-f0-9]{40}$")
+                        if step.get("uses", "").startswith("actions/checkout@"):
+                            self.assertEqual(step["with"]["persist-credentials"], "false")
 
     def test_all_eight_distinct_platform_version_pairs(self):
         rows = self.plan("full")
@@ -95,7 +118,7 @@ class Contract(unittest.TestCase):
             expected=hashlib.sha256(original).hexdigest()+"  "+archive.name+"\n"
             env={**os.environ,"RUNNER_TEMP":temp,"ARCHIVE":archive.name,"PUBLIC_ARCHIVE":archive.name}
             def gate():
-                return subprocess.run(["bash","-c",step["run"]],env=env,
+                return subprocess.run(shell_command(step),env=env,
                     capture_output=True).returncode
             check.write_text(expected)
             self.assertEqual(gate(),0)
@@ -122,7 +145,7 @@ class Contract(unittest.TestCase):
             manifest.write_text(digest+"  "+old.name+"\n")
             env={**os.environ,"RUNNER_TEMP":temp,"ARCHIVE":old.name,"PUBLIC_ARCHIVE":new.name}
             def gate():
-                return subprocess.run(["bash","-c",step["run"]],env=env,capture_output=True)
+                return subprocess.run(shell_command(step),env=env,capture_output=True)
             new.write_bytes(b"existing package")
             self.assertNotEqual(gate().returncode,0)
             self.assertEqual(new.read_bytes(),b"existing package")
@@ -145,7 +168,7 @@ class Contract(unittest.TestCase):
                 def gate():
                     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
                     (work / "SHA256SUMS").write_text(digest + "  " + archive.name + "\n")
-                    return subprocess.run(["bash", "-c", step["run"]], env=env,
+                    return subprocess.run(shell_command(step), env=env,
                                           capture_output=True)
                 make_archive(archive)
                 result = gate()
@@ -200,7 +223,7 @@ class Contract(unittest.TestCase):
             manifest.write_text(digest + "  " + old.name + "\n")
             env = {**os.environ, "RUNNER_TEMP": temp, "ARCHIVE": old.name,
                    "PUBLIC_ARCHIVE": new.name}
-            result = subprocess.run(["bash", "-c", step["run"]], env=env, capture_output=True)
+            result = subprocess.run(shell_command(step), env=env, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertEqual({p.name for p in work.iterdir()}, {new.name, manifest.name})
             self.assertEqual(new.read_bytes(), original)
@@ -219,6 +242,8 @@ class Contract(unittest.TestCase):
             (work / "SHA256SUMS").write_text(digest + "  " + old.name + "\n")
             env = {**os.environ, "RUNNER_TEMP": temp, "ARCHIVE": old.name,
                    "PUBLIC_ARCHIVE": new.name}
+            if new.exists():
+                self.skipTest('Native alias behavior covered by the real rename test')
             # Model a case-insensitive filesystem's alias lookup on Linux.
             prefix = """
 from pathlib import Path
@@ -237,10 +262,30 @@ def alias_samefile(path, other):
 with patch.object(Path, "exists", alias_exists), patch.object(Path, "samefile", alias_samefile):
     exec(SCRIPT)
 """
-            result = subprocess.run(["python3", "-c", prefix.replace("SCRIPT", repr(script))],
+            result = subprocess.run([sys.executable, "-c", prefix.replace("SCRIPT", repr(script))],
                                     env=env, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertEqual({p.name for p in work.iterdir()}, {new.name, "SHA256SUMS"})
+
+    def test_summary_writes_valid_utf8_and_lf(self):
+        step = next(s for s in self.steps if s.get("name") == "Verify artifact handoff")
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp) / "plugin-ci"
+            work.mkdir()
+            archive = work / "example-test.tar.gz"
+            make_archive(archive)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            (work / "SHA256SUMS").write_text(digest + "  " + archive.name + "\n")
+            summary = Path(temp) / "summary"
+            summary.write_bytes("Résumé\n".encode("utf-8"))
+            env = {**os.environ, "RUNNER_TEMP": temp, "ARCHIVE": archive.name,
+                   "PUBLIC_ARCHIVE": archive.name, "GITHUB_STEP_SUMMARY": str(summary)}
+            result = subprocess.run(shell_command(step), env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            data = summary.read_bytes()
+            self.assertTrue(data.startswith("Résumé\n### Verified".encode("utf-8")))
+            self.assertNotIn(b"\r", data)
+            self.assertIn((digest + "  " + archive.name + "\n").encode(), data)
 
     def test_source_archive_handoff_and_exact_upload(self):
         step=next(s for s in self.steps if s.get("name")=="Verify source package")
@@ -253,14 +298,14 @@ with patch.object(Path, "exists", alias_exists), patch.object(Path, "samefile", 
         with tempfile.TemporaryDirectory() as temp:
             p=Path(temp)/"plugin-ci-source";p.mkdir()
             archive=p/"framerot-source.tar.gz"
-            archive.write_bytes(b"verified source archive")
+            make_archive(archive, (("framerot/COPYING", b"license"), ("framerot/src/main.c", b"source")))
             manifest=p/"SHA256SUMS"
             manifest.write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name+"\n")
             payload=p/"PAYLOAD-SHA256SUMS"
             payload.write_text("a"*64+"  framerot/bin/64bit/framerot.so\n")
             env={**os.environ,"RUNNER_TEMP":temp,"PUBLIC_NAME":"framerot"}
             def gate():
-                return subprocess.run(["bash","-c",step["run"]],env=env,capture_output=True).returncode
+                return subprocess.run(shell_command(step),env=env,capture_output=True).returncode
             self.assertEqual(gate(),0)
             digest = "a" * 64
             for invalid in [
@@ -273,9 +318,21 @@ with patch.object(Path, "exists", alias_exists), patch.object(Path, "samefile", 
                     payload.write_text(invalid)
                     self.assertNotEqual(gate(),0)
             payload.write_text(digest+"  framerot/bin/64bit/framerot.so\n")
+            original = archive.read_bytes()
+            for entries in ((), (("framerot/../escape", b"x"),), (("framerot/.git/config", b"x"),),
+                            (("framerot/.env", b"x"),), (("framerot/COPYING", b"license"), ("framerot/bin/module.so", b"x")),
+                            (("framerot/COPYING", b"license"), ("framerot/bin/module.so.1", b"x")),
+                            (("framerot/COPYING", b"license"), ("other/source.c", b"x")),
+                            (("framerot/src/main.c", b"x"),)):
+                with self.subTest(entries=entries):
+                    make_archive(archive, entries)
+                    manifest.write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name+"\n")
+                    self.assertNotEqual(gate(),0)
+            archive.write_bytes(original)
+            manifest.write_text(hashlib.sha256(original).hexdigest()+"  "+archive.name+"\n")
             archive.write_bytes(b"corrupted")
             self.assertNotEqual(gate(),0)
-            archive.write_bytes(b"verified source archive")
+            archive.write_bytes(original)
             payload.unlink()
             self.assertNotEqual(gate(),0)
 

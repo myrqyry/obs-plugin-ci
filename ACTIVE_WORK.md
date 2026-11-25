@@ -131,3 +131,19 @@ all nine passed, SHA-256 bytes unchanged. Native Windows/macOS execution
 of the rename remains unqualified; source archive structural inspection,
 self-testing workflow and reusable SDK provisioning remain next.
 No callers changed or pushed.
+
+## Source verification and self-testing CI
+
+Added source tar/gzip readability and single-root validation, safe paths,
+regular files/directories only, root LICENSE/COPYING and common compiled
+binary suffix exclusions. Full tracked-file/license/payload policy stays
+caller-owned. Fixed prior summary newline escape bug, reproduced with an
+explicit GITHUB_STEP_SUMMARY regression test. Replayed nine hosted binary
+archives with real summary paths and verified Framerot hosted source against
+the final source policy. Twelve local contract tests passed. Added read-only
+ci.yml running tests on all four runner families, pinned checkout and
+setup-python v6 SHA, Python 3.11, pinned PyYAML test dependency. Actual
+native case-only rename test is cross-platform; alias simulation only runs
+on case-sensitive filesystems. Hosted self-CI has not run; no publishing
+or downstream pin changes. Next: matrix/source host selection, synthetic
+workflow-call fixture, and SDK provisioning extraction based on real callers.

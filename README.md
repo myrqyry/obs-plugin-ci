@@ -68,9 +68,7 @@ RUNNER_TEMP/plugin-ci-source with PUBLIC_NAME-source.tar.gz, its SHA256SUMS
 and the verified installed-file PAYLOAD-SHA256SUMS manifest. The source
 archive checksum and nonempty, unique, relative payload-manifest paths are
 checked before either artifact is uploaded. Source and binary
-are uploaded separately with exact paths and 14-day retention. All source
-archive licensing, tracked-file allowlists and payload validation remain
-the caller's responsibility. No release is created.
+are uploaded separately with exact paths and 14-day retention. The shared source gate additionally checks a readable single-root tar/gzip\ncontainer, safe regular-file/directory paths, a root LICENSE or COPYING,\nand excludes common compiled-binary suffixes. Full license compliance,\ntracked-file allowlists and installed-payload hash validation remain\nthe caller's responsibility. No release is created.
 
 ## Adoption
 
@@ -101,7 +99,7 @@ Run local contract tests with Python 3.11+, Bash and PyYAML:
 
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_workflow.py
 
-The tests cover the eight unique target/version combinations, exact
+The repository also runs this contract suite on Ubuntu, Windows, macOS\nApple Silicon and macOS Intel via its own ci.yml on main pushes, pull\nrequests and manual dispatches. This is infrastructure-only testing, not\nOBS SDK build or runtime qualification.\n\nThe tests cover the eight unique target/version combinations, exact
 upload paths, permission boundaries and real checksum-gate execution.
 Hosted workflow-call execution and artifact upload passed for the Streaming
 Media pilot. The caller-driver/subset path also passed the [Framerot Linux OBS 32 pilot](https://github.com/myrqyry/framerot/actions/runs/45577168933), including all 18 native tests and both downloaded artifact audits.

@@ -240,7 +240,7 @@ jobs:
               expected = digest + "  " + public.name + "\n"
               checksums.write_text(expected, encoding="utf-8", newline="\n")
           if os.getenv("GITHUB_STEP_SUMMARY"):
-              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8", newline="\\n") as summary:
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8", newline="\n") as summary:
                   summary.write("### Verified module-only test package\n\n```\n" + expected + "```\n")
           PYTHON
       - name: Verify source package
@@ -248,7 +248,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PYTHON'
-          import hashlib, os, re
+          import gzip, hashlib, os, re, tarfile
           from pathlib import Path
           work = Path(os.environ["RUNNER_TEMP"]) / "plugin-ci-source"
           archive = work / (os.environ["PUBLIC_NAME"] + "-source.tar.gz")
@@ -261,6 +261,58 @@ jobs:
               digest = hashlib.file_digest(f, "sha256").hexdigest()
           if checksums.read_text(encoding="utf-8") != digest + "  " + archive.name + "\n":
               raise SystemExit("Source archive SHA-256 mismatch")
+          # Source archives have a different policy from binary packages.
+          # Preserve source-specific licensing and tracked-file checks in the
+          # caller, while requiring a safe, readable, single-root container.
+          entries = {}
+          spellings = {}
+          roots = set()
+          regular = set()
+          try:
+              with tarfile.open(archive, "r:gz") as package:
+                  for info in package:
+                      name = info.name
+                      parts = name.split("/")
+                      if (any(p in ("", ".", "..") or p.endswith((" ", ".")) for p in parts)
+                              or any(ord(c) < 32 or c in "\\\\:" for c in name)):
+                          raise ValueError(f"Unsafe source path: {name!r}")
+                      if any(p.casefold() in (".git", ".env") for p in parts):
+                          raise ValueError(f"Forbidden source path: {name!r}")
+                      if not (info.isfile() or info.isdir()):
+                          raise ValueError(f"Unsupported source member: {name!r}")
+                      if info.isfile() and (len(parts) < 2 or re.search(
+                              r"\.(?:so(?:\.[0-9]+)*|dll|dylib|exe|pdb|o|obj|a|lib|pyc)$", name, re.I)):
+                          raise ValueError(f"Unexpected source file: {name!r}")
+                      for end in range(1, len(parts) + 1):
+                          prefix = "/".join(parts[:end])
+                          if spellings.setdefault(prefix.casefold(), prefix) != prefix:
+                              raise ValueError(f"Case-colliding source path: {name!r}")
+                      if name in entries:
+                          raise ValueError(f"Duplicate source path: {name!r}")
+                      entries[name] = info.isdir()
+                      roots.add(parts[0])
+                      if info.isfile():
+                          with package.extractfile(info) as stream:
+                              while stream.read(1024 * 1024):
+                                  pass
+                          if info.size:
+                              regular.add(name)
+              with gzip.open(archive, "rb") as stream:
+                  while stream.read(1024 * 1024):
+                      pass
+              if len(roots) != 1 or not regular:
+                  raise ValueError("Source archive must have one root and nonempty files")
+              for name in entries:
+                  parts = name.split("/")
+                  if any(entries.get("/".join(parts[:i])) is False for i in range(1, len(parts))):
+                      raise ValueError(f"Source file used as directory: {name!r}")
+              root = next(iter(roots))
+              if not any(name.startswith(root + "/") and name.count("/") == 1
+                         and re.fullmatch(r"(?:LICENSE|COPYING)(?:[._-].+)?", name.split("/")[-1], re.I)
+                         for name in regular):
+                  raise ValueError("Source archive missing root LICENSE or COPYING")
+          except (OSError, EOFError, ValueError, tarfile.TarError) as exc:
+              raise SystemExit(f"Invalid source package: {exc}") from exc
           lines = payload.read_text(encoding="utf-8").splitlines()
           if not lines:
               raise SystemExit("Empty payload checksum manifest")
