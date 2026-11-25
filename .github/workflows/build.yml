@@ -12,6 +12,18 @@ on:
         required: false
         type: string
         default: ""
+      profile:
+        description: Qualified matrix (full or linux-obs32)
+        type: string
+        default: full
+      driver:
+        description: Native default or caller-owned verification adapter
+        type: string
+        default: native
+      source-package:
+        description: Upload separately verified source archive and payload manifest
+        type: boolean
+        default: false
       minimum-tests:
         description: Minimum Linux regression test count
         required: true
@@ -21,55 +33,53 @@ permissions:
   contents: read
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Select qualified matrix
+        id: matrix
+        shell: bash
+        env:
+          PROFILE: ${{ inputs.profile }}
+          DRIVER: ${{ inputs.driver }}
+          SOURCE_PACKAGE: ${{ inputs.source-package }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          profile, driver, source = (os.environ[k] for k in ("PROFILE", "DRIVER", "SOURCE_PACKAGE"))
+          if profile not in ("full", "linux-obs32") or driver not in ("native", "caller"):
+              raise SystemExit("Unsupported matrix profile or driver")
+          if source not in ("true", "false") or (source == "true" and driver != "caller"):
+              raise SystemExit("Source packages require a caller-owned verifier")
+          rows = [
+              {'target': 'linux-x86_64', 'label': 'Linux x86_64', 'runner': 'ubuntu-24.04', 'obs': '32.2.0', 'extension': 'tar.gz'},
+              {'target': 'windows-x64', 'label': 'Windows x64', 'runner': 'windows-2025-vs2026', 'obs': '32.2.0', 'extension': 'zip'},
+              {'target': 'macos-arm64', 'label': 'macOS Apple Silicon', 'runner': 'macos-26', 'obs': '32.2.0', 'extension': 'zip'},
+              {'target': 'macos-x86_64', 'label': 'macOS Intel', 'runner': 'macos-26-intel', 'obs': '32.2.0', 'extension': 'zip'},
+              {'target': 'linux-x86_64', 'label': 'Linux x86_64', 'runner': 'ubuntu-26.04', 'obs': '33.0.3', 'extension': 'tar.gz'},
+              {'target': 'windows-x64', 'label': 'Windows x64', 'runner': 'windows-2025-vs2026', 'obs': '33.0.3', 'extension': 'zip'},
+              {'target': 'macos-arm64', 'label': 'macOS Apple Silicon', 'runner': 'macos-26', 'obs': '33.0.3', 'extension': 'zip'},
+              {'target': 'macos-x86_64', 'label': 'macOS Intel', 'runner': 'macos-26-intel', 'obs': '33.0.3', 'extension': 'zip'},
+          ]
+          if profile == "linux-obs32":
+              rows = [r for r in rows if r["target"] == "linux-x86_64" and r["obs"] == "32.2.0"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("matrix=" + json.dumps({"include": rows}, separators=(",", ":")) + "\n")
+          PYTHON
+
   build:
+    needs: plan
     name: ${{ matrix.label }} · OBS ${{ matrix.obs }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: linux-x86_64
-            label: Linux x86_64
-            runner: ubuntu-24.04
-            obs: "32.2.0"
-            extension: tar.gz
-          - target: windows-x64
-            label: Windows x64
-            runner: windows-2025-vs2026
-            obs: "32.2.0"
-            extension: zip
-          - target: macos-arm64
-            label: macOS Apple Silicon
-            runner: macos-26
-            obs: "32.2.0"
-            extension: zip
-          - target: macos-x86_64
-            label: macOS Intel
-            runner: macos-26-intel
-            obs: "32.2.0"
-            extension: zip
-          - target: linux-x86_64
-            label: Linux x86_64
-            runner: ubuntu-26.04
-            obs: "33.0.3"
-            extension: tar.gz
-          - target: windows-x64
-            label: Windows x64
-            runner: windows-2025-vs2026
-            obs: "33.0.3"
-            extension: zip
-          - target: macos-arm64
-            label: macOS Apple Silicon
-            runner: macos-26
-            obs: "33.0.3"
-            extension: zip
-          - target: macos-x86_64
-            label: macOS Intel
-            runner: macos-26-intel
-            obs: "33.0.3"
-            extension: zip
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
+      TARGET: ${{ matrix.target }}
       MODULE: ${{ inputs.module }}
       PUBLIC_NAME: ${{ inputs.package-name || inputs.module }}
       MINIMUM_TESTS: ${{ inputs.minimum-tests }}
@@ -88,7 +98,7 @@ jobs:
           [[ "$PUBLIC_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
           [[ "$MINIMUM_TESTS" =~ ^[1-9][0-9]*$ ]]
       - name: Check README links and verifier tests
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.driver == 'native'
         run: |
           python3 .github/scripts/test-verify-native.py
           python3 .github/scripts/test-readme-links.py
@@ -107,15 +117,19 @@ jobs:
             libxkbcommon-dev libx11-dev libx11-xcb-dev libxcb1-dev \
             libxcb-xinput-dev libglib2.0-dev zlib1g-dev
       - name: Prepare pinned OBS SDK
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.driver == 'native'
         run: bash .github/scripts/prepare-obs32-sdk.sh "$RUNNER_TEMP/obs-sdk" "$OBS_VERSION"
       - name: Build, test and verify Linux package
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.driver == 'native'
         run: bash .github/scripts/verify-linux.sh "$RUNNER_TEMP/obs-sdk/sdk" "$RUNNER_TEMP/plugin-ci" "$MODULE" "$MINIMUM_TESTS"
       - name: Build, test and verify Windows or macOS package
-        if: runner.os != 'Linux'
+        if: runner.os != 'Linux' && inputs.driver == 'native'
         shell: bash
         run: python .github/scripts/verify-native.py "$RUNNER_TEMP/plugin-ci" --obs-version "$OBS_VERSION"
+      - name: Build and verify caller package
+        if: inputs.driver == 'caller'
+        shell: bash
+        run: bash .github/scripts/ci-verify.sh
       - name: Verify artifact handoff
         shell: bash
         run: |
@@ -143,6 +157,28 @@ jobs:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
                   summary.write("### Verified module-only test package\n\n```\n" + expected + "```\n")
           PYTHON
+      - name: Verify source package
+        if: inputs.source-package && matrix.target == 'linux-x86_64' && matrix.obs == '32.2.0'
+        shell: bash
+        run: |
+          python - <<'PYTHON'
+          import hashlib, os, re
+          from pathlib import Path
+          work = Path(os.environ["RUNNER_TEMP"]) / "plugin-ci-source"
+          archive = work / (os.environ["PUBLIC_NAME"] + "-source.tar.gz")
+          checksums = work / "SHA256SUMS"
+          payload = work / "PAYLOAD-SHA256SUMS"
+          for path in (archive, checksums, payload):
+              if path.is_symlink() or not path.is_file() or not path.stat().st_size:
+                  raise SystemExit("Missing or invalid source package file")
+          with archive.open("rb") as f:
+              digest = hashlib.file_digest(f, "sha256").hexdigest()
+          if checksums.read_text(encoding="utf-8") != digest + "  " + archive.name + "\n":
+              raise SystemExit("Source archive SHA-256 mismatch")
+          if not all(re.fullmatch(r"[a-f0-9]{64}  [^\r\n]+", line)
+                     for line in payload.read_text(encoding="utf-8").splitlines()):
+              raise SystemExit("Invalid payload checksum manifest")
+          PYTHON
       - name: Upload verified test package
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -150,6 +186,19 @@ jobs:
           path: |
             ${{ runner.temp }}/plugin-ci/${{ env.PUBLIC_ARCHIVE }}
             ${{ runner.temp }}/plugin-ci/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload verified source package
+        if: inputs.source-package && matrix.target == 'linux-x86_64' && matrix.obs == '32.2.0'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ inputs.package-name || inputs.module }}-source
+          path: |
+            ${{ runner.temp }}/plugin-ci-source/${{ env.PUBLIC_NAME }}-source.tar.gz
+            ${{ runner.temp }}/plugin-ci-source/SHA256SUMS
+            ${{ runner.temp }}/plugin-ci-source/PAYLOAD-SHA256SUMS
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

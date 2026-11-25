@@ -4,7 +4,7 @@ A reusable native build matrix and verified test-artifact contract. Derived
 from Streaming Media's successful OBS 32.2.0/33.0.3 matrix, including
 Linux x86_64, Windows x64, macOS Intel and Apple Silicon.
 
-## Contract (initial pilot)
+## Build contract
 
 The calling repository owns its source-specific verification drivers.
 This first extraction standardizes runner selection, SDK versions,
@@ -12,14 +12,14 @@ read-only permissions, tests before upload, archive naming, integrity,
 artifact retention and the absence of automatic releases. It does not
 yet centralize SDK provisioning or plugin-specific dependency recipes.
 
-Required caller files:
+Default native driver caller files:
 
 - `.github/scripts/prepare-obs32-sdk.sh SDK_WORK OBS_VERSION`
 - `.github/scripts/verify-linux.sh SDK WORK MODULE MINIMUM_TESTS`
 - `.github/scripts/verify-native.py WORK --obs-version OBS_VERSION`
 - Existing native-verifier and README-link tests/checker.
 
-Each verifier must build Release, execute its required native regression
+Each verifier must build a release-mode configuration, execute its required native regression
 suite, enforce a module-specific payload allowlist, validate installation
 layout and archive integrity, and produce precisely:
 
@@ -38,20 +38,43 @@ build directories are uploaded. Artifact retention is 14 days, and
 artifacts are explicitly test packages, not release binaries. On a public
 caller repository, assume artifacts are externally downloadable.
 
+## Caller-owned drivers and qualified platform subsets
+
+The default profile is `full` (eight target/version combinations).
+`profile: linux-obs32` selects only the established Ubuntu 24.04 / OBS 32.2.0
+target; unsupported profiles fail at planning rather than silently skipping jobs.
+The default driver preserves the original pinned SDK verifier contract.
+With `driver: caller`, the shared workflow runs the caller's
+`.github/scripts/ci-verify.sh` after installing the common Linux dependencies.
+It receives TARGET, MODULE, PUBLIC_NAME, OBS_VERSION, MINIMUM_TESTS, ARCHIVE and
+RUNNER_TEMP. The caller owns SDK provisioning, any additional dependencies,
+all regression and package-content gates, and must produce the archive and
+single-entry checksum at RUNNER_TEMP/plugin-ci. A successful driver exit
+does not replace the common archive checksum verification.
+
+Optional `source-package: true` is available for caller-owned drivers.
+On the Linux OBS 32.2.0 job, the caller must additionally prepare
+RUNNER_TEMP/plugin-ci-source with PUBLIC_NAME-source.tar.gz, its SHA256SUMS
+and the verified installed-file PAYLOAD-SHA256SUMS manifest. The source
+archive is checked before either artifact is uploaded. Source and binary
+are uploaded separately with exact paths and 14-day retention. All source
+archive licensing, tracked-file allowlists and payload validation remain
+the caller's responsibility. No release is created.
+
 ## Adoption
 
 Streaming Media now calls the published workflow pinned at
-`db6c0a2495456274ecf91f18fc83dd64dc6d29e8`. Its temporary local copy has
-been removed. [Hosted pilot run](https://github.com/myrqyry/streaming-media-source/actions/runs/45558327793)
-completed all eight jobs and produced eight non-expired artifacts. The original
-run uses module-based names; the next caller revision selects the public name.
+`197937941f13cd2adabd302a19691b44b62b2032`. Its temporary local copy has
+been removed. [Hosted pilot run](https://github.com/myrqyry/streaming-media-source/actions/runs/45566510651)
+completed all eight jobs; all eight public-name packages were downloaded,
+inspected and checked against their SHA-256 manifests.
 
 Example caller (requires the verifier contract above):
 
 ```yaml
 jobs:
   build:
-    uses: myrqyry/obs-plugin-ci/.github/workflows/build.yml@db6c0a2495456274ecf91f18fc83dd64dc6d29e8
+    uses: myrqyry/obs-plugin-ci/.github/workflows/build.yml@197937941f13cd2adabd302a19691b44b62b2032
     with:
       module: obs-streaming-media
       package-name: streaming-media-source
@@ -69,6 +92,7 @@ Run local contract tests with Python 3.11+, Bash and PyYAML:
 
 The tests cover the eight unique target/version combinations, exact
 upload paths, permission boundaries and real checksum-gate execution.
-Hosted workflow-call execution and artifact upload remain to be verified.
+Hosted workflow-call execution and artifact upload passed for the Streaming
+Media pilot. The new caller-driver/subset path needs its own hosted qualification.
 
 Source: myrqyry/streaming-media-source, merged baseline 2fbb807.

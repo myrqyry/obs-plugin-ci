@@ -70,3 +70,13 @@ and obs-retro-effects are also clean. HyperShader has 12 unpublished
 commits, Timeline one, Aftermarket checkout 19 and a modified source
 file; isolate future CI work from those changes. No other caller adopted
 the shared workflow yet.
+
+## Framerot migration slice
+
+Extended shared build.yml with a validated full/linux-obs32 matrix selector,
+caller-owned verifier driver, and separately verified optional source archive.
+Preserves the native default driver's eight target/version combinations.
+Six contract tests pass (including actual plan-step execution, invalid inputs,
+checksum handoff and missing/corrupt source artifacts). Framerot's existing
+pinned SDK, 18 tests, install payload and source checks remain caller-owned.
+Hosted qualification of this new workflow revision is pending.

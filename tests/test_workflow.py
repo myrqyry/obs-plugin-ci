@@ -1,5 +1,6 @@
 """Contract tests for the reusable native build workflow."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -16,12 +17,33 @@ class Contract(unittest.TestCase):
         self.job = self.workflow["jobs"]["build"]
         self.steps = self.job["steps"]
 
+    def plan(self, profile, driver="native", source="false"):
+        step = next(s for s in self.workflow["jobs"]["plan"]["steps"]
+                    if s.get("name") == "Select qualified matrix")
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/"output"
+            env={**os.environ,"PROFILE":profile,"DRIVER":driver,
+                 "SOURCE_PACKAGE":source,"GITHUB_OUTPUT":str(output)}
+            result=subprocess.run(["bash","-c",step["run"]],env=env,capture_output=True)
+            if result.returncode:
+                return None
+            return json.loads(output.read_text().strip().split("=",1)[1])["include"]
+
     def test_all_eight_distinct_platform_version_pairs(self):
-        rows = self.job["strategy"]["matrix"]["include"]
+        rows = self.plan("full")
         self.assertEqual({(r["target"], r["obs"]) for r in rows},
             {(p,v) for p in ("linux-x86_64","windows-x64","macos-arm64","macos-x86_64")
              for v in ("32.2.0","33.0.3")})
         self.assertEqual(len(rows),8)
+
+    def test_qualified_linux_subset_and_invalid_profiles(self):
+        rows=self.plan("linux-obs32","caller","true")
+        self.assertEqual(len(rows),1)
+        self.assertEqual((rows[0]["target"],rows[0]["obs"],rows[0]["runner"]),
+                         ("linux-x86_64","32.2.0","ubuntu-24.04"))
+        self.assertIsNone(self.plan("typo"))
+        self.assertIsNone(self.plan("linux-obs32","unknown"))
+        self.assertIsNone(self.plan("full","native","true"))
 
     def test_upload_has_exact_paths_and_no_release_permission(self):
         upload = next(s for s in self.steps if s.get("name") == "Upload verified test package")
@@ -81,6 +103,32 @@ class Contract(unittest.TestCase):
             self.assertFalse(old.exists())
             self.assertEqual(hashlib.sha256(new.read_bytes()).hexdigest(),digest)
             self.assertEqual(manifest.read_text(),digest+"  "+new.name+"\n")
+
+    def test_source_archive_handoff_and_exact_upload(self):
+        step=next(s for s in self.steps if s.get("name")=="Verify source package")
+        upload=next(s for s in self.steps if s.get("name")=="Upload verified source package")
+        self.assertEqual(upload["with"]["if-no-files-found"],"error")
+        self.assertEqual(upload["with"]["path"].splitlines(),[
+            "${{ runner.temp }}/plugin-ci-source/${{ env.PUBLIC_NAME }}-source.tar.gz",
+            "${{ runner.temp }}/plugin-ci-source/SHA256SUMS",
+            "${{ runner.temp }}/plugin-ci-source/PAYLOAD-SHA256SUMS"])
+        with tempfile.TemporaryDirectory() as temp:
+            p=Path(temp)/"plugin-ci-source";p.mkdir()
+            archive=p/"framerot-source.tar.gz"
+            archive.write_bytes(b"verified source archive")
+            manifest=p/"SHA256SUMS"
+            manifest.write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+"  "+archive.name+"\n")
+            payload=p/"PAYLOAD-SHA256SUMS"
+            payload.write_text("a"*64+"  framerot/bin/64bit/framerot.so\n")
+            env={**os.environ,"RUNNER_TEMP":temp,"PUBLIC_NAME":"framerot"}
+            def gate():
+                return subprocess.run(["bash","-c",step["run"]],env=env,capture_output=True).returncode
+            self.assertEqual(gate(),0)
+            archive.write_bytes(b"corrupted")
+            self.assertNotEqual(gate(),0)
+            archive.write_bytes(b"verified source archive")
+            payload.unlink()
+            self.assertNotEqual(gate(),0)
 
 if __name__ == "__main__":
     unittest.main()
