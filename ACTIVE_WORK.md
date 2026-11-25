@@ -259,3 +259,26 @@ and collector shell blocks passed using one release executable. Fresh
 dispatch required for clean retry rather than replacing immutable uploads.
 Existing production build.yml unchanged; no push. Next: hosted fixture
 qualification, shared SDK provisioning/caching based on caller evidence.
+
+## Shared SDK recipe catalog and source cache
+
+Compared actual Streaming Media, UI Augment, Framerot and HyperShader
+Linux preparation scripts. Preserve streaming-minimal (32.2.0/33.0.3,
+scripting/browser OFF) vs legacy-core (32.2.0/33.0.1, no overrides).
+Added Rust sdk-plan with source pins, configure options, build targets,
+install components and canonical recipe SHA-256; sdk-verify-source and
+sdk-fetch implement verified, content-addressed source archive reuse.
+No-clobber temp publication, fail closed on corrupt existing cache, reject
+symlinked content directory and nonregular source file. Source identity
+does not imply compiled SDK compatibility.
+
+Real upstream sources 32.2.0 (16185428 bytes), 33.0.3 (16258068 bytes)
+and 33.0.1 (16255057 bytes) all matched their caller-recorded SHA-256.
+32.2.0 cache reused across both recipes; 47 MiB total at
+/tmp/obs-ci-sdk-audit.SEI4D0 (temporary verification cache). 35 test methods
+on Linux passed (16 Rust, 12 workflow, three parity, two qualification,
+two engine bundle), fmt, Clippy, release build and diff check passed.
+Desktop root filesystem reported only 5.4 GiB available, so no full
+SDK compilation was started. Next: shared CMake execution and host/ABI
+fingerprint with installed SDK receipt verification, then hosted pilot.
+Production workflow and downstream callers unchanged; no push.

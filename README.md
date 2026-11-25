@@ -220,3 +220,34 @@ confirmation. The receipt checks integrity and identity within the trusted
 same-run build; it is not a signature or independent provenance attestation.
 For a clean retry, start a fresh dispatch rather than re-uploading existing
 immutable artifacts. No release distribution or external caller integration.
+
+### Pinned Linux SDK recipes and source cache
+
+    ./target/release/obs-ci sdk-plan --obs-version 32.2.0 --recipe streaming-minimal
+    ./target/release/obs-ci sdk-fetch --cache "$HOME/.cache/obs-ci/sources" --obs-version 32.2.0 --recipe streaming-minimal
+    ./target/release/obs-ci sdk-verify-source --obs-version 32.2.0 --recipe legacy-core /path/to/obs-studio-32.2.0.tar.gz
+
+The catalog preserves the observed Linux build contracts:
+
+| Recipe | Pinned OBS versions | Original caller evidence |
+| --- | --- | --- |
+| streaming-minimal | 32.2.0, 33.0.3 | Streaming Media prepare-obs32-sdk.sh and obs-sdk-pins.json |
+| legacy-core | 32.2.0, 33.0.1 | Framerot/UI Augment SDK scripts; HyperShader OBS33 compatibility script |
+
+The streaming recipe explicitly disables scripting and browser; the
+legacy recipe does not override those options. Both specify the original
+core build targets and Development/Runtime install components. Unsupported
+version/recipe pairs are rejected. A canonical recipe hash distinguishes
+build configurations even when they share identical source bytes.
+
+Source downloads require curl and use HTTPS with checksum verification
+before no-clobber cache publication. Cache entries are keyed by upstream
+SHA-256, independently of the recipe. Existing entries are rehashed on
+every hit; invalid entries fail closed without automatic deletion or
+replacement. Use a trusted, user-controlled cache directory. A source
+cache hit is not a compiled SDK cache hit. Built SDK caching requires a
+separate host/compiler/dependency fingerprint and install-tree verification.
+
+All three source pins were verified by fetching the actual upstream
+archives. The SDK recipe catalog does not yet execute CMake, and no
+compiled SDK or plugin caller is migrated by these commands.

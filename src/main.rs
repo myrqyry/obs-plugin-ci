@@ -2,6 +2,7 @@ mod audit;
 mod handoff;
 mod native;
 mod plan;
+mod sdk;
 
 use clap::{Parser, Subcommand};
 use std::{error::Error, path::PathBuf, process::ExitCode};
@@ -35,6 +36,30 @@ enum Command {
         /// Restrict to comma-separated pinned OBS versions.
         #[arg(long, value_delimiter = ',')]
         obs_versions: Vec<String>,
+    },
+    /// Print a pinned Linux SDK source and CMake recipe.
+    SdkPlan {
+        #[arg(long)]
+        obs_version: String,
+        #[arg(long)]
+        recipe: String,
+    },
+    /// Verify an existing pinned OBS source archive.
+    SdkVerifySource {
+        archive: PathBuf,
+        #[arg(long)]
+        obs_version: String,
+        #[arg(long)]
+        recipe: String,
+    },
+    /// Fetch or reverify a content-addressed OBS source archive.
+    SdkFetch {
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        obs_version: String,
+        #[arg(long)]
+        recipe: String,
     },
     /// Read-only binary archive and adjacent SHA256SUMS verification.
     Audit { archive: PathBuf },
@@ -84,6 +109,41 @@ fn run(command: Command) -> Result<(), Box<dyn Error>> {
                     &driver,
                     source_package,
                     (&targets, &obs_versions),
+                )?)?
+            );
+        }
+        Command::SdkPlan {
+            obs_version,
+            recipe,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&sdk::plan(&obs_version, &recipe)?)?
+            );
+        }
+        Command::SdkVerifySource {
+            archive,
+            obs_version,
+            recipe,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&sdk::verify_source(
+                    &sdk::plan(&obs_version, &recipe)?,
+                    &archive
+                )?)?
+            );
+        }
+        Command::SdkFetch {
+            cache,
+            obs_version,
+            recipe,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&sdk::fetch_source(
+                    &sdk::plan(&obs_version, &recipe)?,
+                    &cache
                 )?)?
             );
         }

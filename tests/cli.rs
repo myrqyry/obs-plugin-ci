@@ -534,3 +534,122 @@ fn handoff_rejects_distinct_case_only_hardlink_and_renames_normally() {
     );
     assert!(!old.exists());
 }
+
+#[test]
+fn sdk_plans_preserve_distinct_qualified_recipes() {
+    let run = |version: &str, recipe: &str| {
+        cli()
+            .args(["sdk-plan", "--obs-version", version, "--recipe", recipe])
+            .output()
+            .unwrap()
+    };
+    let streaming = run("32.2.0", "streaming-minimal");
+    assert!(streaming.status.success(), "{streaming:?}");
+    let a: serde_json::Value = serde_json::from_slice(&streaming.stdout).unwrap();
+    assert_eq!(
+        a["source_sha256"],
+        "c333e4a7d5c4a94c7bb4833f046368e0ac5e981fb3964ca4981b23be1dfbda4a"
+    );
+    assert!(
+        a["cmake_options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "-DENABLE_SCRIPTING=OFF")
+    );
+    let standard = run("32.2.0", "legacy-core");
+    assert!(standard.status.success());
+    let b: serde_json::Value = serde_json::from_slice(&standard.stdout).unwrap();
+    assert!(
+        !b["cmake_options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "-DENABLE_SCRIPTING=OFF")
+    );
+    assert_ne!(a["recipe_sha256"], b["recipe_sha256"]);
+    assert!(run("33.0.3", "streaming-minimal").status.success());
+    assert!(run("33.0.1", "legacy-core").status.success());
+    for (version, recipe) in [
+        ("33.0.3", "legacy-core"),
+        ("33.0.1", "streaming-minimal"),
+        ("latest", "legacy-core"),
+        ("32.2.0", "unknown"),
+    ] {
+        assert!(!run(version, recipe).status.success());
+    }
+}
+
+#[test]
+fn sdk_source_rejects_mismatched_bytes() {
+    let dir = tempdir().unwrap();
+    let archive = dir.path().join("obs-studio-32.2.0.tar.gz");
+    fs::write(&archive, b"not pinned OBS source").unwrap();
+    let result = cli()
+        .args([
+            "sdk-verify-source",
+            "--obs-version",
+            "32.2.0",
+            "--recipe",
+            "legacy-core",
+        ])
+        .arg(&archive)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("SHA-256"));
+}
+
+#[test]
+fn sdk_fetch_rejects_corrupt_existing_cache_without_replacing_it() {
+    let dir = tempdir().unwrap();
+    let folder = dir
+        .path()
+        .join("c333e4a7d5c4a94c7bb4833f046368e0ac5e981fb3964ca4981b23be1dfbda4a");
+    fs::create_dir(&folder).unwrap();
+    let archive = folder.join("obs-studio-32.2.0.tar.gz");
+    fs::write(&archive, b"corrupt existing source").unwrap();
+    let result = cli()
+        .args([
+            "sdk-fetch",
+            "--obs-version",
+            "32.2.0",
+            "--recipe",
+            "legacy-core",
+            "--cache",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("SHA-256"));
+    assert_eq!(fs::read(&archive).unwrap(), b"corrupt existing source");
+}
+
+#[cfg(unix)]
+#[test]
+fn sdk_fetch_refuses_symlinked_content_address_directory() {
+    let dir = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let folder = dir
+        .path()
+        .join("c333e4a7d5c4a94c7bb4833f046368e0ac5e981fb3964ca4981b23be1dfbda4a");
+    std::os::unix::fs::symlink(outside.path(), &folder).unwrap();
+    let archive = outside.path().join("obs-studio-32.2.0.tar.gz");
+    fs::write(&archive, b"external file").unwrap();
+    let result = cli()
+        .args([
+            "sdk-fetch",
+            "--obs-version",
+            "32.2.0",
+            "--recipe",
+            "legacy-core",
+            "--cache",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cache directory"));
+    assert_eq!(fs::read(&archive).unwrap(), b"external file");
+}
