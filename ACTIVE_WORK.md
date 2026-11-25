@@ -186,3 +186,25 @@ release build passed. Production workflow still uses Python; new selectors
 and source auditor are local tooling until hosted qualification. Next:
 safe package rename and synthetic workflow-call fixture, followed by
 revision-pinned executable distribution and SDK provisioning.
+
+## Rust verified handoff and native binary inspection
+
+Added handoff with pre-audit, portable filename validation, same-extension
+requirement, exact source name, destination collision protection including
+case-only hard links, staged recovery and atomic manifest replacement.
+Tested normal/case-only rename, tampered input, collisions, and simulated
+manifest write failure with byte-preserving rollback. Requires isolated
+same-filesystem staging and hard-link support; not crash-atomic.
+
+Added inspect-module using goblin, exact OBS32/33 module path, 64-bit
+ELF/PE/thin Mach-O architecture and library type checks, three required
+OBS exports and linked-library receipts. No code executed; static checks
+do not qualify ABI, dependency resolution, code signing or runtime load.
+All nine downloaded hosted packages passed native inspection on Linux,
+and temporary renamed copies passed checksum and module verification
+with unchanged archive SHA-256. Compiled real cdylib fixture exercises
+positive and missing-export cases; native Windows/macOS CI still pending.
+Eleven Rust tests, three parity tests, 12 workflow tests, formatting,
+Clippy and release build passed. No production workflow changes or push.
+Next: synthetic workflow-call fixture, revision-pinned executable
+distribution, then SDK provisioning/caching.

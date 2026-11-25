@@ -13,8 +13,8 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[derive(Serialize)]
 pub struct Receipt {
-    archive: String,
-    sha256: String,
+    pub(crate) archive: String,
+    pub(crate) sha256: String,
     bytes: u64,
     regular_files: usize,
     directories: usize,
@@ -27,6 +27,7 @@ struct Members {
     nonempty_files: usize,
     hashes: BTreeMap<String, String>,
     nonempty_paths: BTreeSet<String>,
+    captured: Option<Vec<u8>>,
 }
 
 impl Members {
@@ -110,7 +111,12 @@ fn digest(file: &mut impl Read) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 
-fn inspect(path: &Path, source: bool, hash_members: bool) -> Result<(Receipt, Members)> {
+fn inspect(
+    path: &Path,
+    source: bool,
+    hash_members: bool,
+    capture: Option<&str>,
+) -> Result<(Receipt, Members)> {
     let name = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -144,7 +150,9 @@ fn inspect(path: &Path, source: bool, hash_members: bool) -> Result<(Receipt, Me
             }
             members.add(&member_name, directory, entry.size())?;
             // Reading every member verifies its decompression and CRC.
-            if hash_members && !directory {
+            if capture == Some(member_name.as_str()) && !directory {
+                members.captured = Some(read_module(&mut entry)?);
+            } else if hash_members && !directory {
                 members.hashes.insert(member_name, digest(&mut entry)?);
             } else {
                 io::copy(&mut entry, &mut io::sink())?;
@@ -184,7 +192,9 @@ fn inspect(path: &Path, source: bool, hash_members: bool) -> Result<(Receipt, Me
                 return Err(format!("Unsupported tar member type: {member_name:?}").into());
             }
             members.add(&member_name, kind.is_dir(), entry.size())?;
-            if hash_members && kind.is_file() {
+            if capture == Some(member_name.as_str()) && kind.is_file() {
+                members.captured = Some(read_module(&mut entry)?);
+            } else if hash_members && kind.is_file() {
                 members.hashes.insert(member_name, digest(&mut entry)?);
             } else {
                 io::copy(&mut entry, &mut io::sink())?;
@@ -214,7 +224,7 @@ fn inspect(path: &Path, source: bool, hash_members: bool) -> Result<(Receipt, Me
 }
 
 pub fn audit(path: &Path) -> Result<Receipt> {
-    Ok(inspect(path, false, false)?.0)
+    Ok(inspect(path, false, false, None)?.0)
 }
 
 #[derive(Serialize)]
@@ -286,7 +296,7 @@ fn payload_manifest(path: &Path) -> Result<BTreeMap<String, String>> {
 }
 
 pub fn audit_source(path: &Path, binary: Option<&Path>) -> Result<SourceReceipt> {
-    let (receipt, members) = inspect(path, true, false)?;
+    let (receipt, members) = inspect(path, true, false, None)?;
     let roots: BTreeSet<_> = members
         .entries
         .keys()
@@ -308,7 +318,7 @@ pub fn audit_source(path: &Path, binary: Option<&Path>) -> Result<SourceReceipt>
     }
     let expected = payload_manifest(&path.with_file_name("PAYLOAD-SHA256SUMS"))?;
     if let Some(binary) = binary {
-        let (_, installed) = inspect(binary, false, true)?;
+        let (_, installed) = inspect(binary, false, true, None)?;
         if expected != installed.hashes {
             let missing: Vec<_> = expected
                 .keys()
@@ -332,4 +342,24 @@ pub fn audit_source(path: &Path, binary: Option<&Path>) -> Result<SourceReceipt>
         payload_entries: expected.len(),
         payload_verified: binary.is_some(),
     })
+}
+
+fn read_module(reader: &mut impl Read) -> Result<Vec<u8>> {
+    const MAX: u64 = 128 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    reader.take(MAX + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX {
+        return Err("Module exceeds 128 MiB inspection limit".into());
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn module_bytes(path: &Path, member: &str) -> Result<(Receipt, Vec<u8>)> {
+    let (receipt, members) = inspect(path, false, false, Some(member))?;
+    Ok((
+        receipt,
+        members
+            .captured
+            .ok_or_else(|| format!("Missing module member: {member}"))?,
+    ))
 }

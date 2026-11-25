@@ -151,7 +151,29 @@ Run the Rust tests and the cross-implementation parity suite:
     cargo clippy --locked --all-targets -- -D warnings
 
 The existing Python workflow remains authoritative; the Rust tool does
-not yet implement public renaming, SDK
+not yet implement SDK
 provisioning, caller builds, or publication. No caller needs Rust today.
 Self-CI checks both implementations on all four runner families; hosted
 qualification remains pending. The dependency lockfile is committed.
+
+### Verified handoff and native inspection
+
+    ./target/release/obs-ci handoff /path/to/module-test.zip --public-name public-test.zip
+    ./target/release/obs-ci inspect-module /path/to/plugin-test.tar.gz --module framerot --target linux-x86_64 --obs-version 32.2.0
+
+Handoff requires an audited binary archive and a matching SHA256SUMS in an
+isolated staging directory on a filesystem supporting hard links. It
+refuses destination collisions, preserves archive bytes, uses a staged
+backup and atomically replaces the checksum manifest. On manifest failure
+it attempts rollback; if restoration fails the backup path is reported.
+It is not a crash-atomic multi-file transaction; do not run concurrent
+writers against the same staging directory.
+
+Native inspection checks the exact qualified OBS layout for the requested
+module and version, 64-bit ELF shared objects, PE DLLs or thin Mach-O
+bundles/dylibs, target architecture and the three required OBS exports
+(obs_module_load, obs_module_set_pointer, obs_module_ver). It reports
+linked libraries without executing code. The module inspection limit is
+128 MiB; universal Mach-O is not supported yet. Static inspection does not
+establish runtime loadability, ABI compatibility, dependency resolution,
+signature validity or the actual OBS version used to build the binary.

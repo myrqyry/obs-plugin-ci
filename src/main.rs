@@ -1,4 +1,6 @@
 mod audit;
+mod handoff;
+mod native;
 mod plan;
 
 use clap::{Parser, Subcommand};
@@ -36,6 +38,22 @@ enum Command {
     },
     /// Read-only binary archive and adjacent SHA256SUMS verification.
     Audit { archive: PathBuf },
+    /// Verify and rename a package with no destination overwrite.
+    Handoff {
+        archive: PathBuf,
+        #[arg(long)]
+        public_name: String,
+    },
+    /// Verify the expected native module, architecture and OBS entry-point exports.
+    InspectModule {
+        archive: PathBuf,
+        #[arg(long)]
+        module: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        obs_version: String,
+    },
     /// Verify source archive and payload manifest; optionally compare an actual binary package.
     AuditSource {
         archive: PathBuf,
@@ -66,6 +84,31 @@ fn run(command: Command) -> Result<(), Box<dyn Error>> {
                     &driver,
                     source_package,
                     (&targets, &obs_versions),
+                )?)?
+            );
+        }
+        Command::Handoff {
+            archive,
+            public_name,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&handoff::handoff(&archive, &public_name)?)?
+            );
+        }
+        Command::InspectModule {
+            archive,
+            module,
+            target,
+            obs_version,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&native::inspect_module(
+                    &archive,
+                    &module,
+                    &target,
+                    &obs_version
                 )?)?
             );
         }

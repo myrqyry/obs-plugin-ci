@@ -269,3 +269,268 @@ fn source_audit_checks_manifest_and_binary_payload() {
     );
     assert!(!run().status.success());
 }
+
+#[test]
+fn handoff_preserves_bytes_and_exact_filename() {
+    let dir = tempdir().unwrap();
+    let old = dir.path().join("Example-test.zip");
+    zip_package(&old, &["example/module.dll"]);
+    let original = fs::read(&old).unwrap();
+    let manifest = old.with_file_name("SHA256SUMS");
+    let run = |name: &str| {
+        cli()
+            .arg("handoff")
+            .arg(&old)
+            .arg("--public-name")
+            .arg(name)
+            .output()
+            .unwrap()
+    };
+    let before = fs::read(&manifest).unwrap();
+    let collision = dir.path().join("other-test.zip");
+    fs::write(&collision, b"do not overwrite").unwrap();
+    for invalid in [
+        "../escape.zip",
+        "other-test.zip",
+        "example-test.tar.gz",
+        "CON.zip",
+    ] {
+        assert!(!run(invalid).status.success(), "{invalid}");
+        assert_eq!(fs::read(&old).unwrap(), original);
+        assert_eq!(fs::read(&manifest).unwrap(), before);
+        assert_eq!(fs::read(&collision).unwrap(), b"do not overwrite");
+    }
+    let result = run("example-test.zip");
+    assert!(result.status.success(), "{result:?}");
+    let new = dir.path().join("example-test.zip");
+    assert_eq!(fs::read(&new).unwrap(), original);
+    assert!(
+        !fs::read_dir(dir.path())
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "Example-test.zip")
+    );
+    assert_eq!(
+        fs::read_to_string(&manifest).unwrap(),
+        format!("{:x}  example-test.zip\n", Sha256::digest(&original))
+    );
+    assert!(
+        cli()
+            .arg("audit")
+            .arg(&new)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        cli()
+            .arg("handoff")
+            .arg(&new)
+            .args(["--public-name", "example-test.zip"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn handoff_does_not_modify_unverified_package() {
+    let dir = tempdir().unwrap();
+    let old = dir.path().join("example-test.zip");
+    zip_package(&old, &["example/module.dll"]);
+    let manifest = old.with_file_name("SHA256SUMS");
+    let before = fs::read(&manifest).unwrap();
+    fs::write(&old, b"tampered").unwrap();
+    let result = cli()
+        .arg("handoff")
+        .arg(&old)
+        .args(["--public-name", "public-test.zip"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert_eq!(fs::read(&old).unwrap(), b"tampered");
+    assert_eq!(fs::read(&manifest).unwrap(), before);
+    assert!(!dir.path().join("public-test.zip").exists());
+}
+
+#[test]
+fn inspect_module_rejects_fake_or_missing_binary() {
+    let dir = tempdir().unwrap();
+    let archive = dir.path().join("example-test.zip");
+    for names in [
+        &["example/bin/64bit/example.dll"][..],
+        &["example/readme.txt"][..],
+    ] {
+        zip_package(&archive, names);
+        let result = cli()
+            .arg("inspect-module")
+            .arg(&archive)
+            .args([
+                "--module",
+                "example",
+                "--target",
+                "windows-x64",
+                "--obs-version",
+                "32.2.0",
+            ])
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+    }
+    // A valid invocation must not fail at CLI parsing, even if binary verification fails.
+    let help = cli().args(["inspect-module", "--help"]).output().unwrap();
+    assert!(help.status.success());
+}
+
+#[test]
+fn inspect_real_compiled_module_and_reject_missing_export() {
+    let dir = tempdir().unwrap();
+    let (target, member, extension, expected_format) =
+        match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("linux", "x86_64") => (
+                "linux-x86_64",
+                "example/bin/64bit/example.so",
+                "tar.gz",
+                "ELF",
+            ),
+            ("windows", "x86_64") => ("windows-x64", "example/bin/64bit/example.dll", "zip", "PE"),
+            ("macos", "aarch64") => (
+                "macos-arm64",
+                "example.plugin/Contents/MacOS/example",
+                "zip",
+                "Mach-O",
+            ),
+            ("macos", "x86_64") => (
+                "macos-x86_64",
+                "example.plugin/Contents/MacOS/example",
+                "zip",
+                "Mach-O",
+            ),
+            _ => return,
+        };
+    let source = dir.path().join("module.rs");
+    let binary = dir
+        .path()
+        .join(format!("fixture{}", std::env::consts::DLL_SUFFIX));
+    let archive = dir.path().join(format!("example-test.{extension}"));
+    for complete in [true, false] {
+        let mut code = String::from(
+            "#[unsafe(no_mangle)] pub extern \"C\" fn obs_module_load() -> bool { true }\n\
+             #[unsafe(no_mangle)] pub extern \"C\" fn obs_module_set_pointer(_: *mut u8) {}\n",
+        );
+        if complete {
+            code.push_str(
+                "#[unsafe(no_mangle)] pub extern \"C\" fn obs_module_ver() -> u32 { 1 }\n",
+            );
+        }
+        fs::write(&source, code).unwrap();
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let result = Command::new(rustc)
+            .args([
+                "--crate-type",
+                "cdylib",
+                "--edition",
+                "2024",
+                "--crate-name",
+                "fixture",
+            ])
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+        let bytes = fs::read(&binary).unwrap();
+        if extension == "zip" {
+            let mut z = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+            z.start_file(member, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(&bytes).unwrap();
+            z.finish().unwrap();
+            write_manifest(&archive);
+        } else {
+            tar_package(&archive, &[(member, &bytes)]);
+        }
+        let result = cli()
+            .arg("inspect-module")
+            .arg(&archive)
+            .args([
+                "--module",
+                "example",
+                "--target",
+                target,
+                "--obs-version",
+                "32.2.0",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(result.status.success(), complete, "{result:?}");
+        if complete {
+            let receipt: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(receipt["format"], expected_format);
+            assert_eq!(receipt["required_exports"].as_array().unwrap().len(), 3);
+            if target.starts_with("macos-") {
+                let wrong = if target == "macos-arm64" {
+                    "macos-x86_64"
+                } else {
+                    "macos-arm64"
+                };
+                assert!(
+                    !cli()
+                        .arg("inspect-module")
+                        .arg(&archive)
+                        .args([
+                            "--module",
+                            "example",
+                            "--target",
+                            wrong,
+                            "--obs-version",
+                            "32.2.0"
+                        ])
+                        .output()
+                        .unwrap()
+                        .status
+                        .success()
+                );
+            }
+        } else {
+            assert!(String::from_utf8_lossy(&result.stderr).contains("obs_module_ver"));
+        }
+    }
+}
+
+#[test]
+fn handoff_rejects_distinct_case_only_hardlink_and_renames_normally() {
+    let dir = tempdir().unwrap();
+    let old = dir.path().join("Example-test.zip");
+    zip_package(&old, &["example/module.dll"]);
+    let original = fs::read(&old).unwrap();
+    let alias = dir.path().join("example-test.zip");
+    // On a case-sensitive filesystem, this is a separate destination
+    // directory entry even though its inode is the same.
+    if !alias.exists() {
+        fs::hard_link(&old, &alias).unwrap();
+        let result = cli()
+            .arg("handoff")
+            .arg(&old)
+            .args(["--public-name", "example-test.zip"])
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert_eq!(fs::read(&alias).unwrap(), original);
+        fs::remove_file(&alias).unwrap();
+    }
+    let result = cli()
+        .arg("handoff")
+        .arg(&old)
+        .args(["--public-name", "public-test.zip"])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(
+        fs::read(dir.path().join("public-test.zip")).unwrap(),
+        original
+    );
+    assert!(!old.exists());
+}
