@@ -80,3 +80,14 @@ Six contract tests pass (including actual plan-step execution, invalid inputs,
 checksum handoff and missing/corrupt source artifacts). Framerot's existing
 pinned SDK, 18 tests, install payload and source checks remain caller-owned.
 Hosted qualification of this new workflow revision is pending.
+
+Framerot caller pushed at 1dbe750 on ci/shared-plugin-build, pins shared
+afeed7458c9fa5da341cc464042fa0f878ecf33c. Existing SDK/GPU/codec build
+script unchanged. All five Framerot infrastructure tests passed (one
+archive adapter, three CTest receipt, one README link test); six shared
+contract tests passed. Downloaded previous successful run 45418891803
+to /tmp/framerot-shared-ci-audit.bFTm1h; actual old archive bytes passed
+both new shared gates, and all seven binary payload file digests matched.
+The new hosted run must complete the real build and all 18 native tests;
+verify both uploaded archives and receipts before merging. Codec-only
+Windows/macOS qualification workflow unchanged. No other plugin migrated.
