@@ -61,6 +61,37 @@ enum Command {
         #[arg(long)]
         recipe: String,
     },
+    /// Fingerprint a Linux SDK environment and exact install workspace.
+    SdkFingerprint {
+        #[arg(long)]
+        obs_version: String,
+        #[arg(long)]
+        recipe: String,
+        #[arg(long)]
+        work: PathBuf,
+    },
+    /// Prepare a new pinned SDK, or verify an existing completed workspace.
+    SdkPrepare {
+        #[arg(long)]
+        obs_version: String,
+        #[arg(long)]
+        recipe: String,
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        work: PathBuf,
+        #[arg(long, default_value_t = 4)]
+        jobs: u16,
+    },
+    /// Verify the installed SDK against its environment and tree receipt.
+    SdkVerifyInstalled {
+        #[arg(long)]
+        obs_version: String,
+        #[arg(long)]
+        recipe: String,
+        #[arg(long)]
+        work: PathBuf,
+    },
     /// Read-only binary archive and adjacent SHA256SUMS verification.
     Audit { archive: PathBuf },
     /// Verify and rename a package with no destination overwrite.
@@ -144,6 +175,49 @@ fn run(command: Command) -> Result<(), Box<dyn Error>> {
                 serde_json::to_string(&sdk::fetch_source(
                     &sdk::plan(&obs_version, &recipe)?,
                     &cache
+                )?)?
+            );
+        }
+        Command::SdkFingerprint {
+            obs_version,
+            recipe,
+            work,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&sdk::fingerprint(
+                    &sdk::plan(&obs_version, &recipe)?,
+                    &work
+                )?)?
+            );
+        }
+        Command::SdkPrepare {
+            obs_version,
+            recipe,
+            cache,
+            work,
+            jobs,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&sdk::prepare(
+                    &sdk::plan(&obs_version, &recipe)?,
+                    &cache,
+                    &work,
+                    jobs
+                )?)?
+            );
+        }
+        Command::SdkVerifyInstalled {
+            obs_version,
+            recipe,
+            work,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&sdk::verify_installed(
+                    &sdk::plan(&obs_version, &recipe)?,
+                    &work
                 )?)?
             );
         }

@@ -251,3 +251,34 @@ separate host/compiler/dependency fingerprint and install-tree verification.
 All three source pins were verified by fetching the actual upstream
 archives. The SDK recipe catalog does not yet execute CMake, and no
 compiled SDK or plugin caller is migrated by these commands.
+
+### Linux SDK execution and verified workspace reuse
+
+    ./target/release/obs-ci sdk-fingerprint --obs-version 32.2.0 --recipe legacy-core --work /path/to/new-work
+    ./target/release/obs-ci sdk-prepare --obs-version 32.2.0 --recipe legacy-core --cache /path/to/source-cache --work /path/to/new-work
+    ./target/release/obs-ci sdk-verify-installed --obs-version 32.2.0 --recipe legacy-core --work /path/to/new-work
+
+The parent of --work must exist. A fresh preparation checks at least
+8 GiB available before fetching source or creating its workspace, verifies
+the pinned source again, extracts it, configures with CMake/Ninja and
+system GCC/G++, builds the two original targets and installs Development
+and Runtime at the final absolute SDK prefix. The build uses a restricted
+environment (system PATH, isolated HOME/TMPDIR, no user CMake package
+registry); diagnostics are retained in sdk-build.log.
+
+The conservative environment fingerprint includes the recipe, absolute
+workspace path, OS release and dpkg status hashes and ten resolved system
+tool paths/content hashes. SDK-RECEIPT.json records this fingerprint and
+the entire installed tree (file content, type, mode, confined relative
+symlinks), required CMake configs and OBS version marker. A repeated
+prepare verifies the complete receipt rather than compiling again.
+Incomplete or modified workspaces fail closed; choose a fresh path for
+a new build. No automatic repair, deletion, cross-prefix relocation or
+cross-host sharing of compiled SDKs. Use trusted, isolated workspace and
+cache paths; this is an integrity receipt, not a signed attestation or
+complete ABI fingerprint (unmanaged headers/libraries are not hashed).
+
+The actual shared configure/build/install and receipt reuse path was
+exercised on a small native CMake fixture, not a full OBS build. Full
+OBS qualification and any integration with production callers remain
+pending; current desktop disk availability is below the guard threshold.

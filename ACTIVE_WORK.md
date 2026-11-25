@@ -282,3 +282,28 @@ Desktop root filesystem reported only 5.4 GiB available, so no full
 SDK compilation was started. Next: shared CMake execution and host/ABI
 fingerprint with installed SDK receipt verification, then hosted pilot.
 Production workflow and downstream callers unchanged; no push.
+
+## Shared SDK executor and verified local reuse
+
+Added sdk-fingerprint, sdk-prepare and sdk-verify-installed in Rust.
+Conservative Linux x86_64/Debian-compatible fingerprint binds exact
+workspace/prefix, recipe, OS, dpkg status and ten tool binary digests.
+CMake/Ninja execution keeps original build targets and component install
+order, uses system GCC/G++ and isolated environment, records logs.
+New workspace only, pinned source verified before extraction, 8 GiB
+preflight; no overwrite or repair. Receipt verifies full install tree
+including file modes/content and confined relative links, required
+configs and version marker. Matching completed workspace reused without
+fetch/build; changed fingerprint/tree or missing receipt fails closed.
+
+Actual CMake C/C++ shared-library fixture built/installed with the shared
+executor; reuse, modified library, extra file, escaping symlink and
+wrong recipe verified. Real host fingerprint repeatable; real low-space
+guard rejected new build before source fetch or work creation (5.0 GiB
+available). 37 test methods (18 Rust, 12 workflow, three parity, two
+qualification, two bundle), Clippy, fmt and release build passed.
+No complete OBS SDK build executed; no claim of ABI compatibility or
+cross-host cache reuse. Unmanaged dependencies remain outside the
+fingerprint. Next hosted qualification and actual OBS SDK pilot, then
+evaluate portable SDK/cache receipts and declarative package policies.
+Production workflows untouched; no push.

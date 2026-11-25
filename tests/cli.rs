@@ -653,3 +653,36 @@ fn sdk_fetch_refuses_symlinked_content_address_directory() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("cache directory"));
     assert_eq!(fs::read(&archive).unwrap(), b"external file");
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn sdk_fingerprint_tracks_recipe_and_install_prefix() {
+    let dir = tempdir().unwrap();
+    let run = |recipe: &str, prefix: &Path| {
+        let result = cli()
+            .args([
+                "sdk-fingerprint",
+                "--obs-version",
+                "32.2.0",
+                "--recipe",
+                recipe,
+                "--work",
+            ])
+            .arg(prefix)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+        serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap()
+    };
+    let a = run("legacy-core", &dir.path().join("a"));
+    assert_eq!(a, run("legacy-core", &dir.path().join("a")));
+    assert_ne!(
+        a["cache_key"],
+        run("streaming-minimal", &dir.path().join("a"))["cache_key"]
+    );
+    assert_ne!(
+        a["cache_key"],
+        run("legacy-core", &dir.path().join("b"))["cache_key"]
+    );
+    assert_eq!(a["cache_key"].as_str().unwrap().len(), 64);
+}
