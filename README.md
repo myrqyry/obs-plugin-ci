@@ -36,11 +36,21 @@ caller repository, assume artifacts are externally downloadable.
 
 ## Adoption
 
-The Streaming Media pilot uses an identical local reusable workflow while
-this repository remains local. Once the shared project is intentionally
-published and its callable workflow qualified, replace the local reference
-with the shared workflow pinned to its exact commit SHA. Remove the
-temporary local copy after proving the remote invocation.
+Streaming Media now calls the published workflow pinned at
+`db6c0a2495456274ecf91f18fc83dd64dc6d29e8`. Its temporary local copy has
+been removed. [Hosted pilot run](https://github.com/myrqyry/streaming-media-source/actions/runs/45558327793)
+has started all eight jobs; upload results remain unqualified.
+
+Example caller (requires the verifier contract above):
+
+```yaml
+jobs:
+  build:
+    uses: myrqyry/obs-plugin-ci/.github/workflows/build.yml@db6c0a2495456274ecf91f18fc83dd64dc6d29e8
+    with:
+      module: obs-streaming-media
+      minimum-tests: 9
+```
 
 Do not migrate other repositories until their actual build targets,
 resource files, dependency licenses, regression gates and package layouts

@@ -18,3 +18,25 @@ SHA-256 files; switch the caller to the shared immutable commit. Then
 generalize SDK preparation, native verifier and package policies from
 actual Timeline, Framerot, emuLens, HyperShader and other active repos.
 Do not remove specialized CI until replacement passes. No releases.
+
+## Published pilot
+
+Owner authorized publication and qualification. Public repository created
+at https://github.com/myrqyry/obs-plugin-ci, main db6c0a2. Streaming Media
+branch ci/shared-plugin-build 367c131 calls the exact published workflow
+commit; duplicate local workflow removed. Hosted run 45558327793 started
+all eight jobs. Verify completed jobs and download every artifact, check
+names, exact contents, and SHA256SUMS before merging or migrating callers.
+
+Next candidate: ~/loam/framerot-release (clean, tracks myrqyry/framerot).
+Its existing Linux CI has 18 native/codec/GPU tests and publishes binary
+and source archives plus two checksum manifests. It installs both OBS
+Development and Runtime components and builds libobs-opengl; retain this
+GPU test environment and source-distribution artifact. Separate Windows
+and macOS codec qualification tests do not yet build/install full plugins.
+Do not replace them with an unqualified eight-job plugin matrix. Extend
+shared contract to accommodate independently qualified platform subsets
+and supplemental artifacts without weakening exact payload verification.
+HyperShader and Timeline local checkouts have unpublished commits; do
+not sweep those into a CI migration. emuLens-release is clean but uses
+template packaging with plugin-specific GPU tests and resources.
