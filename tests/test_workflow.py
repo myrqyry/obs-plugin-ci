@@ -17,10 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/build.yml"
 
 def shell_command(step):
+    # These contract steps are pure Python heredocs. Use the already-selected
+    # interpreter, avoiding Windows Git Bash alias and PATH translation.
     script = step["run"]
-    if os.name == "nt" and script.startswith("python3 - "):
-        script = script.replace("python3 - ", "python - ", 1)
-    return ["bash", "-c", script]
+    header, sep, body = script.partition("<<'PYTHON'\n")
+    if not sep or header.strip() not in ("python -", "python3 -"):
+        raise ValueError("Expected a pure Python workflow step")
+    code, sep, tail = body.rpartition("\nPYTHON")
+    if not sep or tail.strip():
+        raise ValueError("Unexpected trailing shell commands")
+    return [sys.executable, "-c", code]
 
 
 def make_archive(path, entries=(("example/bin/plugin.so", b"module"),)):
@@ -56,6 +62,13 @@ class Contract(unittest.TestCase):
             if result.returncode:
                 return None
             return json.loads(output.read_text().strip().split("=",1)[1])["include"]
+
+    def test_embedded_python_uses_active_interpreter(self):
+        step = {"run": "python - <<'PYTHON'\nimport sys; print(sys.executable)\nPYTHON\n"}
+        command = shell_command(step)
+        self.assertEqual(command[:2], [sys.executable, "-c"])
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), Path(sys.executable).resolve())
 
     def test_workflow_permissions_and_action_pins(self):
         for path in WORKFLOW.parent.glob("*.yml"):

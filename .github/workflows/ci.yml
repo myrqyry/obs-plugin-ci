@@ -37,6 +37,14 @@ jobs:
       - name: Install pinned Rust toolchain
         shell: bash
         run: rustup toolchain install 1.93.1 --profile minimal --component rustfmt --component clippy
+      - name: Provision isolated Linux SDK test toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build build-essential binutils pkg-config
+          for tool in cmake ninja gcc g++ ld ar ranlib pkg-config as strip; do
+            test -x "/usr/bin/$tool" || { echo "Missing SDK test tool /usr/bin/$tool" >&2; exit 1; }
+          done
       - name: Check Rust CLI
         shell: bash
         env:
