@@ -1,6 +1,7 @@
 mod audit;
 mod handoff;
 mod native;
+mod pack;
 mod plan;
 mod sdk;
 
@@ -92,6 +93,17 @@ enum Command {
         #[arg(long)]
         work: PathBuf,
     },
+    /// Package a staged binary tree into a new verified artifact directory.
+    Pack {
+        #[arg(long)]
+        stage: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        archive_name: String,
+    },
+    /// Emit sorted per-file SHA-256 entries from a verified binary package.
+    PayloadManifest { archive: PathBuf },
     /// Read-only binary archive and adjacent SHA256SUMS verification.
     Audit { archive: PathBuf },
     /// Verify and rename a package with no destination overwrite.
@@ -220,6 +232,19 @@ fn run(command: Command) -> Result<(), Box<dyn Error>> {
                     &work
                 )?)?
             );
+        }
+        Command::Pack {
+            stage,
+            output,
+            archive_name,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string(&pack::pack(&stage, &output, &archive_name)?)?
+            );
+        }
+        Command::PayloadManifest { archive } => {
+            print!("{}", audit::payload_checksums(&archive)?);
         }
         Command::Handoff {
             archive,

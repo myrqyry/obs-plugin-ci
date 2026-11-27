@@ -30,7 +30,7 @@ class Parity(unittest.TestCase):
     def test_planner(self):
         step = WORKFLOW["jobs"]["plan"]["steps"][0]
         cases = [(p, d, s, "example", "public-name", "9")
-                 for p in ("full", "linux-obs32")
+                 for p in ("full", "linux-obs32", "linux")
                  for d, s in (("native", False), ("caller", False), ("caller", True))]
         cases += [
             ("unknown", "native", False, "example", "example", "1"),

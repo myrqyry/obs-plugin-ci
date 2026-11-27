@@ -13,7 +13,7 @@ on:
         type: string
         default: ""
       profile:
-        description: Qualified matrix (full or linux-obs32)
+        description: Matrix (full, linux, or linux-obs32)
         type: string
         default: full
       driver:
@@ -58,7 +58,7 @@ jobs:
           if not re.fullmatch(r"[1-9][0-9]*", os.environ["MINIMUM_TESTS"]):
               raise SystemExit("Invalid MINIMUM_TESTS: expected a positive integer")
           profile, driver, source = (os.environ[k] for k in ("PROFILE", "DRIVER", "SOURCE_PACKAGE"))
-          if profile not in ("full", "linux-obs32") or driver not in ("native", "caller"):
+          if profile not in ("full", "linux-obs32", "linux") or driver not in ("native", "caller"):
               raise SystemExit("Unsupported matrix profile or driver")
           if source not in ("true", "false") or (source == "true" and driver != "caller"):
               raise SystemExit("Source packages require a caller-owned verifier")
@@ -72,6 +72,8 @@ jobs:
               {'target': 'macos-arm64', 'label': 'macOS Apple Silicon', 'runner': 'macos-26', 'obs': '33.0.3', 'extension': 'zip'},
               {'target': 'macos-x86_64', 'label': 'macOS Intel', 'runner': 'macos-26-intel', 'obs': '33.0.3', 'extension': 'zip'},
           ]
+          if profile == "linux":
+              rows = [r for r in rows if r["target"] == "linux-x86_64"]
           if profile == "linux-obs32":
               rows = [r for r in rows if r["target"] == "linux-x86_64" and r["obs"] == "32.2.0"]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:

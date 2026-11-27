@@ -55,7 +55,9 @@ pub fn plan(
     {
         return Err("Invalid MINIMUM_TESTS: expected a positive integer".into());
     }
-    if !matches!(profile, "full" | "linux-obs32") || !matches!(driver, "native" | "caller") {
+    if !matches!(profile, "full" | "linux-obs32" | "linux")
+        || !matches!(driver, "native" | "caller")
+    {
         return Err("Unsupported matrix profile or driver".into());
     }
     if source_package && driver != "caller" {
@@ -85,6 +87,9 @@ pub fn plan(
             ("macos-arm64", "macOS Apple Silicon", "macos-26", "zip"),
             ("macos-x86_64", "macOS Intel", "macos-26-intel", "zip"),
         ] {
+            if profile == "linux" && target != "linux-x86_64" {
+                continue;
+            }
             if profile == "linux-obs32" && (target != "linux-x86_64" || obs != "32.2.0") {
                 continue;
             }

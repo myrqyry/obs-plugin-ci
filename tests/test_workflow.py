@@ -77,6 +77,11 @@ class Contract(unittest.TestCase):
              for v in ("32.2.0","33.0.3")})
         self.assertEqual(len(rows),8)
 
+    def test_linux_both_sdk_versions(self):
+        rows = self.plan("linux", "caller", "true")
+        self.assertEqual([(r["target"], r["obs"]) for r in rows],
+                         [("linux-x86_64", "32.2.0"), ("linux-x86_64", "33.0.3")])
+
     def test_qualified_linux_subset_and_invalid_profiles(self):
         rows=self.plan("linux-obs32","caller","true")
         self.assertEqual(len(rows),1)

@@ -8,7 +8,7 @@ fn cli() -> Command {
 
 #[test]
 fn full_matrix_and_linux_subset() {
-    for (profile, count) in [("full", 8), ("linux-obs32", 1)] {
+    for (profile, count) in [("full", 8), ("linux-obs32", 1), ("linux", 2)] {
         let result = cli()
             .args([
                 "plan",
@@ -685,4 +685,99 @@ fn sdk_fingerprint_tracks_recipe_and_install_prefix() {
         run("legacy-core", &dir.path().join("b"))["cache_key"]
     );
     assert_eq!(a["cache_key"].as_str().unwrap().len(), 64);
+}
+
+#[test]
+fn pack_stage_and_emit_verified_payload_manifest() {
+    for ext in ["tar.gz", "zip"] {
+        let temp = tempdir().unwrap();
+        let stage = temp.path().join("stage");
+        fs::create_dir_all(stage.join("example/data")).unwrap();
+        fs::write(stage.join("example/module"), b"native").unwrap();
+        fs::write(stage.join("example/data/empty"), b"").unwrap();
+        fs::write(stage.join("example/LICENSE"), b"license").unwrap();
+        let output = temp.path().join("output");
+        let name = format!("example-test.{ext}");
+        let run = || {
+            cli()
+                .arg("pack")
+                .arg("--stage")
+                .arg(&stage)
+                .arg("--output")
+                .arg(&output)
+                .args(["--archive-name", &name])
+                .output()
+                .unwrap()
+        };
+        let result = run();
+        assert!(result.status.success(), "{:?}", result);
+        let archive = output.join(&name);
+        let original = fs::read(&archive).unwrap();
+        let receipt: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(receipt["regular_files"], 3);
+        let result = cli()
+            .arg("payload-manifest")
+            .arg(&archive)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{:?}", result);
+        let expected = [
+            ("example/LICENSE", b"license".as_slice()),
+            ("example/data/empty", b"".as_slice()),
+            ("example/module", b"native".as_slice()),
+        ]
+        .iter()
+        .map(|(name, content)| format!("{:x}  {name}\n", Sha256::digest(content)))
+        .collect::<String>();
+        assert_eq!(String::from_utf8(result.stdout).unwrap(), expected);
+        assert!(!run().status.success());
+        assert_eq!(fs::read(&archive).unwrap(), original);
+        fs::write(stage.join("example/data/secret.pdb"), b"debug").unwrap();
+        let bad = temp.path().join("bad");
+        assert!(
+            !cli()
+                .arg("pack")
+                .arg("--stage")
+                .arg(&stage)
+                .arg("--output")
+                .arg(&bad)
+                .args(["--archive-name", &name])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(!bad.exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pack_refuses_links_and_case_collisions_without_output() {
+    let temp = tempdir().unwrap();
+    let stage = temp.path().join("stage");
+    fs::create_dir(&stage).unwrap();
+    fs::write(stage.join("File"), b"data").unwrap();
+    let output = temp.path().join("out");
+    let rejected = || {
+        let result = cli()
+            .arg("pack")
+            .arg("--stage")
+            .arg(&stage)
+            .arg("--output")
+            .arg(&output)
+            .args(["--archive-name", "example-test.zip"])
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(!output.exists());
+    };
+    std::os::unix::fs::symlink(stage.join("File"), stage.join("linked")).unwrap();
+    rejected();
+    fs::remove_file(stage.join("linked")).unwrap();
+    // Case-sensitive Linux supports both names; insensitive macOS may not.
+    if !stage.join("file").exists() {
+        fs::write(stage.join("file"), b"other").unwrap();
+        rejected();
+    }
 }
