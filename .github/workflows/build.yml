@@ -24,6 +24,10 @@ on:
         description: Upload separately verified source archive and payload manifest
         type: boolean
         default: false
+      upload-artifacts:
+        description: Upload audited packages (false retains verification without distribution)
+        type: boolean
+        default: true
       minimum-tests:
         description: Minimum Linux regression test count
         required: true
@@ -332,6 +336,7 @@ jobs:
               seen.add(name)
           PYTHON
       - name: Upload verified test package
+        if: inputs.upload-artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ inputs.package-name || inputs.module }}-${{ matrix.target }}-obs${{ matrix.obs }}-test
@@ -343,7 +348,7 @@ jobs:
           compression-level: 0
 
       - name: Upload verified source package
-        if: inputs.source-package && matrix.target == 'linux-x86_64' && matrix.obs == '32.2.0'
+        if: inputs.upload-artifacts && inputs.source-package && matrix.target == 'linux-x86_64' && matrix.obs == '32.2.0'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ inputs.package-name || inputs.module }}-source

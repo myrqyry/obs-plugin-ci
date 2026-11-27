@@ -303,3 +303,7 @@ The actual shared configure/build/install and receipt reuse path was
 exercised on a small native CMake fixture, not a full OBS build. Full
 OBS qualification and any integration with production callers remain
 pending; current desktop disk availability is below the guard threshold.
+
+### Verification without distribution
+
+Set `upload-artifacts: false` to keep all build, test, archive and checksum gates while disabling both upload steps. This is useful for license-sensitive or source-only qualification. Existing pins and default upload behavior are unchanged.

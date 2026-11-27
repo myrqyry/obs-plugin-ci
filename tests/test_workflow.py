@@ -112,6 +112,15 @@ class Contract(unittest.TestCase):
         self.assertIn("matrix.target", upload["with"]["name"])
         self.assertIn("matrix.obs", upload["with"]["name"])
 
+    def test_no_upload_keeps_verification(self):
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["upload-artifacts"]["default"], "true")
+        steps = {s.get("name"): s for s in self.steps}
+        self.assertEqual(steps["Upload verified test package"]["if"], "inputs.upload-artifacts")
+        self.assertIn("inputs.upload-artifacts &&", steps["Upload verified source package"]["if"])
+        self.assertNotIn("if", steps["Verify artifact handoff"])
+        self.assertNotIn("upload-artifacts", steps["Verify source package"]["if"])
+
     def test_checksum_gate_accepts_only_matching_named_package(self):
         step = next(s for s in self.steps if s.get("name")=="Verify artifact handoff")
         with tempfile.TemporaryDirectory() as temp:
