@@ -33,7 +33,12 @@ def make_archive(path, entries=(("example/bin/plugin.so", b"module"),)):
     if path.suffix == ".zip":
         with zipfile.ZipFile(path, "w") as archive:
             for name, data in entries:
-                archive.writestr(name, data)
+                # ZipInfo normalizes backslashes on Windows. Set the raw
+                # name after construction so the malformed fixture is identical
+                # on every host, not a valid archive on just one host.
+                member = zipfile.ZipInfo(name)
+                member.filename = name
+                archive.writestr(member, data)
     else:
         with tarfile.open(path, "w:gz") as archive:
             for name, data in entries:
@@ -62,6 +67,17 @@ class Contract(unittest.TestCase):
             if result.returncode:
                 return None
             return json.loads(output.read_text().strip().split("=",1)[1])["include"]
+
+    def test_malformed_zip_fixture_keeps_raw_backslashes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "unsafe.zip"
+            raw = "folder\\outside"
+            make_archive(path, ((raw, b"fixture"),))
+            # Check the raw local and central directory names, before any
+            # reader normalizes platform-specific separators.
+            self.assertEqual(path.read_bytes().count(raw.encode()), 2)
+            with zipfile.ZipFile(path) as archive:
+                self.assertEqual(archive.infolist()[0].orig_filename, raw)
 
     def test_embedded_python_uses_active_interpreter(self):
         step = {"run": "python - <<'PYTHON'\nimport sys; print(sys.executable)\nPYTHON\n"}
