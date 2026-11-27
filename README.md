@@ -307,3 +307,15 @@ pending; current desktop disk availability is below the guard threshold.
 ### Verification without distribution
 
 Set `upload-artifacts: false` to keep all build, test, archive and checksum gates while disabling both upload steps. This is useful for license-sensitive or source-only qualification. Existing pins and default upload behavior are unchanged.
+
+### Full native caller packages
+
+A caller using the Linux shell hook can dispatch Windows/macOS to
+\`python scripts/native_caller.py <caller-root>\` instead. This uses the
+same pinned native OBS source/dependency recipe qualified by EmuLens
+and Unscene. Project-specific \`.github/scripts/ci-native.py\` supplies
+configure options and validates the installed assets before packaging.
+The shared Rust writer and native inspector verify the resulting
+version-specific ZIP. Native compile/package qualification is distinct
+from the caller's required Linux runtime suite. No disabled production
+feature or native runtime pass is implied.

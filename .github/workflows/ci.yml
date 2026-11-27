@@ -57,3 +57,4 @@ jobs:
           python tests/test_rust_parity.py
           python tests/test_qualification.py
           python tests/test_engine_bundle.py
+          python tests/test_native_caller.py
