@@ -53,6 +53,15 @@ The default profile is `full` (eight target/version combinations).
 `profile: linux-obs32` selects only the established Ubuntu 24.04 / OBS 32.2.0
 target; `profile: linux` selects both Linux SDK versions without allocating unqualified Windows/macOS runners. Unsupported profiles and invalid module/package identifiers or Linux test floors
 fail at planning before native runners are allocated.
+Before allocating native runners, the planning job now checks the caller
+checkout for the selected driver's required scripts. Set
+`checkout-submodules: true` to recursively check out pinned public Git
+submodules in both planning and build jobs; the default remains false
+for callers with specialized/private dependencies. Additional required
+files or directories can be listed under `required-paths` (one
+repository-relative path per line). Missing paths, escapes, or uninitialized
+submodules fail in planning before OBS SDK provisioning.
+
 The default driver preserves the original pinned SDK verifier contract.
 With `driver: caller`, the shared workflow runs the caller's
 `.github/scripts/ci-verify.sh` after installing the common Linux dependencies.

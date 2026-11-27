@@ -4,7 +4,7 @@ set -euo pipefail
 engine="$(cd "$(dirname "$0")/.." && pwd)"
 CI_ROOT="$(realpath "$1")"
 hook="$CI_ROOT/.github/scripts/ci-project.sh"
-[[ "$TARGET" == linux-x86_64 && "$MODULE" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ && "$PUBLIC_NAME" == "$MODULE" ]]
+[[ "$TARGET" == linux-x86_64 && "$MODULE" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ && "$PUBLIC_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
 [[ "$ARCHIVE" == "$MODULE-linux-x86_64-obs$OBS_VERSION-test.tar.gz" ]]
 [[ "$MINIMUM_TESTS" =~ ^[1-9][0-9]*$ ]]
 case "$OBS_VERSION" in

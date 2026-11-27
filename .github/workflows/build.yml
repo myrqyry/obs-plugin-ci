@@ -20,6 +20,14 @@ on:
         description: Native default or caller-owned verification adapter
         type: string
         default: native
+      checkout-submodules:
+        description: Recursively initialize pinned public submodules
+        type: boolean
+        default: false
+      required-paths:
+        description: Additional caller-relative required files or directories (one per line)
+        type: string
+        default: ""
       source-package:
         description: Upload separately verified source archive and payload manifest
         type: boolean
@@ -39,7 +47,7 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
@@ -84,6 +92,52 @@ jobs:
               out.write("matrix=" + json.dumps({"include": rows}, separators=(",", ":")) + "\n")
           PYTHON
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: ${{ inputs.checkout-submodules && 'recursive' || 'false' }}
+      - name: Validate caller checkout
+        shell: bash
+        env:
+          DRIVER: ${{ inputs.driver }}
+          PROFILE: ${{ inputs.profile }}
+          REQUIRED_PATHS: ${{ inputs.required-paths }}
+          CHECKOUT_SUBMODULES: ${{ inputs.checkout-submodules }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, subprocess
+          from pathlib import Path, PurePosixPath
+          root = Path.cwd().resolve()
+          paths = [line.strip() for line in os.environ["REQUIRED_PATHS"].splitlines() if line.strip()]
+          scripts = root / ".github/scripts"
+          if os.environ["DRIVER"] == "caller":
+              files = [scripts / "ci-verify.sh"]
+          else:
+              files = [scripts / name for name in (
+                  "prepare-obs32-sdk.sh", "verify-linux.sh", "test-verify-native.py",
+                  "test-readme-links.py", "check_readme_links.py")]
+              files.append(root / "README.md")
+              if os.environ["PROFILE"] == "full":
+                  files.append(scripts / "verify-native.py")
+          missing = [str(p.relative_to(root)) for p in files if not p.is_file()]
+          for name in paths:
+              parts = name.split("/")
+              if any(p in ("", ".", "..") for p in parts) or any(c in name for c in ("\\", ":")) or any(ord(c) < 32 for c in name):
+                  raise SystemExit(f"Invalid required path: {name!r}")
+              path = root.joinpath(*PurePosixPath(name).parts)
+              if not path.resolve().is_relative_to(root):
+                  raise SystemExit(f"Required path escapes checkout: {name!r}")
+              if not (path.is_file() or path.is_dir()):
+                  missing.append(name)
+          if missing:
+              raise SystemExit("Missing caller paths: " + ", ".join(missing))
+          if os.environ["CHECKOUT_SUBMODULES"] == "true":
+              status = subprocess.check_output(["git", "submodule", "status", "--recursive"], text=True)
+              if any(not line.startswith(" ") for line in status.splitlines()):
+                  raise SystemExit("Submodules not initialized at their pinned revisions")
+          print("Caller checkout preflight passed")
+          PYTHON
+
   build:
     needs: plan
     name: ${{ matrix.label }} · OBS ${{ matrix.obs }}
@@ -105,6 +159,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: ${{ inputs.checkout-submodules && 'recursive' || 'false' }}
       - name: Check README links and verifier tests
         if: runner.os == 'Linux' && inputs.driver == 'native'
         run: |

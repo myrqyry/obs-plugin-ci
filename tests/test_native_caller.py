@@ -1,4 +1,8 @@
 import importlib.util
+import os
+import shutil
+import subprocess
+import platform
 from pathlib import Path
 import plistlib
 import sys
@@ -10,6 +14,34 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import native_caller as caller
 
 class NativeCallerTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() == "Linux", "Linux caller entrypoint")
+    def test_linux_public_alias_preserves_module_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            engine = root / "engine"
+            script = engine / "scripts/run-linux-caller.sh"
+            script.parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / "scripts/run-linux-caller.sh", script)
+            binary = engine / "target/release/obs-ci"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\n")
+            binary.chmod(0o755)
+            caller_root = root / "caller"
+            hook = caller_root / ".github/scripts/ci-project.sh"
+            hook.parent.mkdir(parents=True)
+            hook.write_text('ci_dependencies(){ printf "%s|%s|%s" "$MODULE" "$PUBLIC_NAME" "$ARCHIVE"; exit 42; }\n')
+            env = {**os.environ, "TARGET": "linux-x86_64", "MODULE": "example",
+                   "PUBLIC_NAME": "public-example", "ARCHIVE": "example-linux-x86_64-obs32.2.0-test.tar.gz",
+                   "MINIMUM_TESTS": "1", "OBS_VERSION": "32.2.0", "RUNNER_TEMP": str(root)}
+            env.pop("OBS_CI_LOCAL_SDK", None)
+            result = subprocess.run(["bash", str(script), str(caller_root)], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 42, result.stderr)
+            self.assertEqual(result.stdout, "example|public-example|example-linux-x86_64-obs32.2.0-test.tar.gz")
+            (root / "invalid").mkdir()
+            result = subprocess.run(["bash", str(script), str(caller_root)],
+                                    env={**env, "PUBLIC_NAME": "../bad", "RUNNER_TEMP": str(root / "invalid")}, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 42)
+
     def test_native_layouts(self):
         for version in ("32.2.0", "33.0.3"):
             for target in ("windows-x64", "macos-arm64", "macos-x86_64"):

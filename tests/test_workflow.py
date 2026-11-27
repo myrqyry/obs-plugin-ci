@@ -99,6 +99,76 @@ class Contract(unittest.TestCase):
                         if step.get("uses", "").startswith("actions/checkout@"):
                             self.assertEqual(step["with"]["persist-credentials"], "false")
 
+    def test_preflight_checks_caller_files_before_matrix_builds(self):
+        steps = self.workflow["jobs"]["plan"]["steps"]
+        preflight = next(s for s in steps if s.get("name") == "Validate caller checkout")
+        for job in (self.workflow["jobs"]["plan"], self.job):
+            checkout = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@"))
+            self.assertIn("inputs.checkout-submodules", checkout["with"]["submodules"])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            env = {**os.environ, "DRIVER": "caller", "PROFILE": "full",
+                   "REQUIRED_PATHS": "vendor/required/CMakeLists.txt",
+                   "CHECKOUT_SUBMODULES": "false"}
+            def run(**overrides):
+                return subprocess.run(shell_command(preflight), cwd=root,
+                                      env={**env, **overrides}, capture_output=True, text=True)
+            self.assertNotEqual(run().returncode, 0)
+            hook = root / ".github/scripts/ci-verify.sh"
+            hook.parent.mkdir(parents=True)
+            hook.write_text("#!/bin/bash\n")
+            self.assertNotEqual(run().returncode, 0)
+            vendor = root / "vendor/required/CMakeLists.txt"
+            vendor.parent.mkdir(parents=True)
+            vendor.write_text("cmake_minimum_required(VERSION 3.20)\n")
+            self.assertEqual(run().returncode, 0, run().stderr)
+            for bad in ("../outside", "/etc/passwd", "vendor/../vendor", "C:\\\\Windows"):
+                self.assertNotEqual(run(REQUIRED_PATHS=bad).returncode, 0, bad)
+            self.assertNotEqual(run(DRIVER="native", REQUIRED_PATHS="").returncode, 0)
+            for name in ("prepare-obs32-sdk.sh", "verify-linux.sh", "test-verify-native.py",
+                         "test-readme-links.py", "check_readme_links.py"):
+                (hook.parent / name).write_text("fixture\n")
+            (root / "README.md").write_text("fixture\n")
+            self.assertEqual(run(DRIVER="native", PROFILE="linux", REQUIRED_PATHS="").returncode, 0)
+            self.assertNotEqual(run(DRIVER="native", PROFILE="full", REQUIRED_PATHS="").returncode, 0)
+            (hook.parent / "verify-native.py").write_text("fixture\n")
+            self.assertEqual(run(DRIVER="native", PROFILE="full", REQUIRED_PATHS="").returncode, 0)
+
+    def test_preflight_rejects_uninitialized_real_submodule(self):
+        preflight = next(s for s in self.workflow["jobs"]["plan"]["steps"]
+                         if s.get("name") == "Validate caller checkout")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            parent, vendor, clone = (root / name for name in ("parent", "vendor", "clone"))
+            def git(cwd, *args):
+                return subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                       "-c", "protocol.file.allow=always", "-C", str(cwd), *args],
+                                      check=True, capture_output=True, text=True)
+            for repo in (parent, vendor):
+                repo.mkdir()
+                git(repo, "init", "-q")
+            (vendor / "CMakeLists.txt").write_text("fixture\n")
+            git(vendor, "add", ".")
+            git(vendor, "commit", "-qm", "vendor")
+            hook = parent / ".github/scripts/ci-verify.sh"
+            hook.parent.mkdir(parents=True)
+            hook.write_text("#!/bin/sh\n")
+            git(parent, "submodule", "add", str(vendor), "vendor/dependency")
+            git(parent, "add", ".")
+            git(parent, "commit", "-qm", "caller")
+            git(root, "clone", "--no-recurse-submodules", str(parent), str(clone))
+            env = {**os.environ, "DRIVER": "caller", "PROFILE": "full",
+                   "REQUIRED_PATHS": "", "CHECKOUT_SUBMODULES": "true"}
+            def run(cwd):
+                return subprocess.run(shell_command(preflight), cwd=cwd, env=env,
+                                      capture_output=True, text=True)
+            self.assertEqual(run(parent).returncode, 0, run(parent).stderr)
+            failed = run(clone)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("Submodules not initialized", failed.stderr)
+            git(clone, "submodule", "update", "--init", "--recursive")
+            self.assertEqual(run(clone).returncode, 0, run(clone).stderr)
+
     def test_all_eight_distinct_platform_version_pairs(self):
         rows = self.plan("full")
         self.assertEqual({(r["target"], r["obs"]) for r in rows},
