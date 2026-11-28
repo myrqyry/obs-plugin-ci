@@ -66,7 +66,7 @@ class Contract(unittest.TestCase):
             result=subprocess.run(shell_command(step),env=env,capture_output=True)
             if result.returncode:
                 return None
-            return json.loads(output.read_text().strip().split("=",1)[1])["include"]
+            return json.loads(output.read_text().splitlines()[0].split("=",1)[1])["include"]
 
     def test_malformed_zip_fixture_keeps_raw_backslashes(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -168,6 +168,39 @@ class Contract(unittest.TestCase):
             self.assertIn("Submodules not initialized", failed.stderr)
             git(clone, "submodule", "update", "--init", "--recursive")
             self.assertEqual(run(clone).returncode, 0, run(clone).stderr)
+
+    def test_opt_in_engine_matrix_deduplicates_native_hosts(self):
+        step = self.workflow["jobs"]["plan"]["steps"][0]
+        revision = "a" * 40
+        def run(profile, driver="caller", pin=revision):
+            with tempfile.TemporaryDirectory() as temp:
+                output = Path(temp) / "output"
+                env = {**os.environ, "PROFILE": profile, "DRIVER": driver,
+                       "SOURCE_PACKAGE": "false", "GITHUB_OUTPUT": str(output),
+                       "MODULE": "example", "PUBLIC_NAME": "example", "MINIMUM_TESTS": "1",
+                       "ENGINE_REVISION": pin}
+                result = subprocess.run(shell_command(step), env=env, capture_output=True)
+                if result.returncode:
+                    return None
+                return {k: json.loads(v) for k, v in
+                        (line.split("=", 1) for line in output.read_text().splitlines())}
+        self.assertEqual(len(run("full")["matrix"]["include"]), 8)
+        engines = run("full")["engines"]["include"]
+        self.assertEqual(len(engines), 4)
+        self.assertEqual({e["target"] for e in engines},
+                         {"linux-x86_64", "windows-x64", "macos-arm64", "macos-x86_64"})
+        self.assertEqual(len(run("linux")["engines"]["include"]), 1)
+        self.assertEqual(run("full", pin="")["engines"]["include"], [])
+        self.assertIsNone(run("full", pin="main"))
+        self.assertIsNone(run("full", driver="native"))
+        jobs = self.workflow["jobs"]
+        self.assertIn("engines", jobs["build"]["needs"])
+        self.assertIn("needs.engines.result", jobs["build"]["if"])
+        upload = next(s for s in jobs["engines"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact@"))
+        download = next(s for s in self.steps if s.get("uses", "").startswith("actions/download-artifact@"))
+        self.assertEqual(upload["with"]["name"], download["with"]["name"])
+        names = [s.get("name") for s in self.steps]
+        self.assertLess(names.index("Restore verified shared engine"), names.index("Build and verify caller package"))
 
     def test_all_eight_distinct_platform_version_pairs(self):
         rows = self.plan("full")

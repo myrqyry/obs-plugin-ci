@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/engine_bundle.py"
@@ -35,6 +36,45 @@ class EngineBundle(unittest.TestCase):
             ["windows-x64", "macos-arm64", "macos-x86_64"])
         with self.assertRaises(subprocess.CalledProcessError):
             matrix(["bogus"])
+
+    @unittest.skipUnless(platform.system() == "Linux", "Execute actual Linux workflow restore step")
+    def test_production_restore_executes_verified_engine_and_rejects_tampering(self):
+        workflow = yaml.load((ROOT / ".github/workflows/build.yml").read_text(), Loader=yaml.BaseLoader)
+        step = next(s for s in workflow["jobs"]["build"]["steps"]
+                    if s.get("name") == "Restore verified shared engine")
+        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / "bundle"
+            subprocess.run([sys.executable, str(SCRIPT), "pack", "--target", TARGET,
+                            "--revision", revision, "--binary", str(EXE),
+                            "--directory", str(bundle)], check=True)
+            for tamper in (False, True):
+                work = root / ("tampered" if tamper else "valid")
+                work.mkdir()
+                received = work / "engine-received"
+                shutil.copytree(bundle, received)
+                if tamper:
+                    with (received / "obs-ci").open("ab") as stream:
+                        stream.write(b"tampered")
+                env_file = work / "env"
+                env = {**os.environ, "TARGET": TARGET, "ENGINE_REVISION": revision,
+                       "RUNNER_TEMP": str(work), "GITHUB_ENV": str(env_file),
+                       "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": f"url.{ROOT.as_uri()}.insteadOf",
+                       "GIT_CONFIG_VALUE_0": "https://github.com/myrqyry/obs-plugin-ci.git"}
+                result = subprocess.run(["bash", "-c", step["run"]], env=env,
+                                        capture_output=True, text=True)
+                executable = work / "obs-ci-engine/target/release/obs-ci"
+                if tamper:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Engine receipt mismatch", result.stderr)
+                    self.assertFalse(executable.exists())
+                    self.assertFalse(env_file.exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(env_file.read_text().strip(), f"OBS_CI_ENGINE_ROOT={work / 'obs-ci-engine'}")
+                    self.assertEqual(executable.read_bytes(), EXE.read_bytes())
+                    self.assertEqual(subprocess.run([str(executable), "--version"], capture_output=True).returncode, 0)
 
     def test_transport_and_tamper_detection(self):
         with tempfile.TemporaryDirectory() as temp:

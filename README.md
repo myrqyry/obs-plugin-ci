@@ -71,6 +71,17 @@ all regression and package-content gates, and must produce the archive and
 single-entry checksum at RUNNER_TEMP/plugin-ci. A successful driver exit
 does not replace the common archive checksum verification.
 
+For caller-owned drivers that use the shared Rust executable, opt in with
+`engine-revision: <full-commit-sha>` (the same shared engine revision the
+caller expects). The workflow compiles one locked executable per selected
+architecture, transports a one-day same-run bundle, verifies host, revision,
+Cargo.lock, toolchain, size and SHA-256, and sets `OBS_CI_ENGINE_ROOT`
+to the restored source checkout with `target/release/obs-ci`
+(or `obs-ci.exe`). The caller must use this root instead of rebuilding
+the engine. Existing callers are unchanged unless they opt in; the engine
+bundle is an internal test artifact even if plugin artifact upload is disabled.
+Use a fresh dispatch for full retries of the engine-producing jobs.
+
 Optional `source-package: true` is available for caller-owned drivers.
 On the Linux OBS 32.2.0 job, the caller must additionally prepare
 RUNNER_TEMP/plugin-ci-source with PUBLIC_NAME-source.tar.gz, its SHA256SUMS
