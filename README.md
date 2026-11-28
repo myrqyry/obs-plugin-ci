@@ -53,6 +53,15 @@ The default profile is `full` (eight target/version combinations).
 `profile: linux-obs32` selects only the established Ubuntu 24.04 / OBS 32.2.0
 target; `profile: linux` selects both Linux SDK versions without allocating unqualified Windows/macOS runners. Unsupported profiles and invalid module/package identifiers or Linux test floors
 fail at planning before native runners are allocated.
+Before allocating native runners, the planning job now checks the caller
+checkout for the selected driver's required scripts. Set
+`checkout-submodules: true` to recursively check out pinned public Git
+submodules in both planning and build jobs; the default remains false
+for callers with specialized/private dependencies. Additional required
+files or directories can be listed under `required-paths` (one
+repository-relative path per line). Missing paths, escapes, or uninitialized
+submodules fail in planning before OBS SDK provisioning.
+
 The default driver preserves the original pinned SDK verifier contract.
 With `driver: caller`, the shared workflow runs the caller's
 `.github/scripts/ci-verify.sh` after installing the common Linux dependencies.
@@ -61,6 +70,41 @@ RUNNER_TEMP. The caller owns SDK provisioning, any additional dependencies,
 all regression and package-content gates, and must produce the archive and
 single-entry checksum at RUNNER_TEMP/plugin-ci. A successful driver exit
 does not replace the common archive checksum verification.
+
+For caller-owned drivers that use the shared Rust executable, opt in with
+`engine-revision: <full-commit-sha>` (the same shared engine revision the
+caller expects). The workflow compiles one locked executable per selected
+architecture, transports a one-day same-run bundle, verifies host, revision,
+Cargo.lock, toolchain, size and SHA-256, and sets `OBS_CI_ENGINE_ROOT`
+to the restored source checkout with `target/release/obs-ci`
+(or `obs-ci.exe`). The caller must use this root instead of rebuilding
+the engine. Existing callers are unchanged unless they opt in; the engine
+bundle is an internal test artifact even if plugin artifact upload is disabled.
+Use a fresh dispatch for full retries of the engine-producing jobs.
+
+Caller adapters invoking the shared Linux driver may also opt in with
+`linux-sdk-cache: true` alongside `engine-revision`. This runs the caller's
+dependency hook before computing the fingerprint and stores only the installed
+SDK tree and its receipt at the original absolute prefix. The exact cache key
+binds the shared engine SHA, SDK recipe, host/package database, compiler/tool
+digests and workspace. There are no fallback keys. Restored SDKs are rehashed
+and the receipt verified before any plugin build; partial/mismatched caches
+fail closed. Cache miss builds from the original checksum-pinned OBS source.
+The dependency hook must be safe to run as a separate preparation step;
+build/test/stage hooks retain their original execution. This is a trusted
+GitHub Actions repository-scoped cache, not a signed remote SDK attestation
+or cross-repository cache. Linux only; native Windows/macOS builds retain
+their existing verified SDK bootstrap.
+
+Specialized Linux verifiers can use the same cache without replacing their
+build/test/stage implementation: provide `.github/scripts/ci-project.sh`
+with the normal `ci_dependencies` hook, then invoke
+`run-linux-caller.sh "$GITHUB_WORKSPACE" --sdk-only` from the caller
+adapter after cache-key preparation/restoration. This performs the exact
+same fingerprint, pinned SDK build or receipt verification, and SDK
+version/header checks, then stops before plugin compilation. The existing
+verifier must use `$RUNNER_TEMP/caller-work/obs/sdk` and retain its
+test and package gates. SDK-only requires the opt-in cache path.
 
 Optional `source-package: true` is available for caller-owned drivers.
 On the Linux OBS 32.2.0 job, the caller must additionally prepare

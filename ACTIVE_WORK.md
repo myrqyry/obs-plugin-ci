@@ -320,3 +320,37 @@ EmuLens Linux SDK script for pinned reuse; experimental SDK executor remains
 separate. 40 local test methods passed, fmt, Clippy and release build passed.
 No existing caller pin changes. New branch is a candidate for HyperDSP's
 Linux-only pilot; hosted qualification not established.
+
+## 2026-11-27: shared checkout preflight, executable transport and Linux SDK reuse
+
+Branch ci/shared-preflight (based on hosted-contract-qualified e9eb704).
+Preflight opt-ins checkout-submodules and required-paths validate before
+expensive native jobs. Real Git submodule fixture rejected uninitialized
+checkout, then passed after initialization. Shared Linux caller accepts a
+separate valid public archive name without altering module identity.
+Optional engine-revision compiles one locked engine per selected target,
+restores only verified same-run executable bundles, and exports
+OBS_CI_ENGINE_ROOT for adapters that explicitly opt in. Actual Linux restore
+step replayed with real compiled executable, including rejection of tampering.
+Existing pins/default caller engine bootstraps unchanged.
+
+Actual Rust SDK executor compiled OBS 32.2.0 legacy-core in 8.832s; verified
+exact same receipt on reuse in 0.042s, no source cache access. Optional
+linux-sdk-cache requires engine-revision; caller dependency hook precedes
+fingerprint, exact cache key includes engine SHA, environment, recipe and
+workspace. Cache only installed SDK and receipt, no fallback key. Partial
+restored cache fails before plugin compile. Real V4L2 Log Quiet caller built
+and passed native CTest and staged-module checks both cold and simulated
+restore; archives were byte-identical SHA-256
+e502b6b9355c3038381d96c6dbfac765745ceca18cb53b868dcc2365026ba685.
+Restored SDK + receipt 2.7 MiB; no source fetch or SDK compilation. Local Linux
+OBS32 only, not actual GitHub cache restoration or cross-repo cache sharing.
+No SDK compatibility claim for Windows/macOS or OBS33 cache path.
+
+52 local test methods passed (20 Rust, 20 workflow, 4 native caller,
+3 parity, 2 synthetic qualification, 3 engine transport); fmt, Clippy,
+release build, actionlint and diff check passed. Next: hosted contract
+qualification on candidate branch, then a small real caller pilot using
+both opt-ins before changing existing production pins. Cross-repository
+SDK distribution, targeted production matrix filters, cancellation,
+ecosystem dashboard and native runtime qualification remain separate work.

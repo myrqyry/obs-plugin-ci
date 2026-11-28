@@ -20,6 +20,22 @@ on:
         description: Native default or caller-owned verification adapter
         type: string
         default: native
+      checkout-submodules:
+        description: Recursively initialize pinned public submodules
+        type: boolean
+        default: false
+      required-paths:
+        description: Additional caller-relative required files or directories (one per line)
+        type: string
+        default: ""
+      engine-revision:
+        description: Optional immutable obs-plugin-ci engine commit for same-run executable reuse (caller driver)
+        type: string
+        default: ""
+      linux-sdk-cache:
+        description: Opt in to exact-environment verified Linux SDK caching (shared caller adapter)
+        type: boolean
+        default: false
       source-package:
         description: Upload separately verified source archive and payload manifest
         type: boolean
@@ -39,9 +55,10 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      engines: ${{ steps.matrix.outputs.engines }}
     steps:
       - name: Select qualified matrix
         id: matrix
@@ -53,6 +70,8 @@ jobs:
           MODULE: ${{ inputs.module }}
           PUBLIC_NAME: ${{ inputs.package-name || inputs.module }}
           MINIMUM_TESTS: ${{ inputs.minimum-tests }}
+          ENGINE_REVISION: ${{ inputs.engine-revision }}
+          LINUX_SDK_CACHE: ${{ inputs.linux-sdk-cache }}
         run: |
           python3 - <<'PYTHON'
           import json, os, re
@@ -66,6 +85,12 @@ jobs:
               raise SystemExit("Unsupported matrix profile or driver")
           if source not in ("true", "false") or (source == "true" and driver != "caller"):
               raise SystemExit("Source packages require a caller-owned verifier")
+          engine = os.environ.get("ENGINE_REVISION", "")
+          if engine and (driver != "caller" or not re.fullmatch(r"[a-f0-9]{40}", engine)):
+              raise SystemExit("Engine reuse requires caller driver and a full lowercase commit SHA")
+          cache = os.environ.get("LINUX_SDK_CACHE", "false")
+          if cache not in ("true", "false") or (cache == "true" and not engine):
+              raise SystemExit("Linux SDK caching requires a pinned shared engine")
           rows = [
               {'target': 'linux-x86_64', 'label': 'Linux x86_64', 'runner': 'ubuntu-24.04', 'obs': '32.2.0', 'extension': 'tar.gz'},
               {'target': 'windows-x64', 'label': 'Windows x64', 'runner': 'windows-2025-vs2026', 'obs': '32.2.0', 'extension': 'zip'},
@@ -80,12 +105,106 @@ jobs:
               rows = [r for r in rows if r["target"] == "linux-x86_64"]
           if profile == "linux-obs32":
               rows = [r for r in rows if r["target"] == "linux-x86_64" and r["obs"] == "32.2.0"]
+          hosts = {}
+          if engine:
+              for row in rows:
+                  hosts.setdefault(row["target"], {"target": row["target"], "runner": row["runner"]})
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write("matrix=" + json.dumps({"include": rows}, separators=(",", ":")) + "\n")
+              out.write("engines=" + json.dumps({"include": list(hosts.values())}, separators=(",", ":")) + "\n")
           PYTHON
 
-  build:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: ${{ inputs.checkout-submodules && 'recursive' || 'false' }}
+      - name: Validate caller checkout
+        shell: bash
+        env:
+          DRIVER: ${{ inputs.driver }}
+          PROFILE: ${{ inputs.profile }}
+          REQUIRED_PATHS: ${{ inputs.required-paths }}
+          CHECKOUT_SUBMODULES: ${{ inputs.checkout-submodules }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, subprocess
+          from pathlib import Path, PurePosixPath
+          root = Path.cwd().resolve()
+          paths = [line.strip() for line in os.environ["REQUIRED_PATHS"].splitlines() if line.strip()]
+          scripts = root / ".github/scripts"
+          if os.environ["DRIVER"] == "caller":
+              files = [scripts / "ci-verify.sh"]
+          else:
+              files = [scripts / name for name in (
+                  "prepare-obs32-sdk.sh", "verify-linux.sh", "test-verify-native.py",
+                  "test-readme-links.py", "check_readme_links.py")]
+              files.append(root / "README.md")
+              if os.environ["PROFILE"] == "full":
+                  files.append(scripts / "verify-native.py")
+          missing = [str(p.relative_to(root)) for p in files if not p.is_file()]
+          for name in paths:
+              parts = name.split("/")
+              if any(p in ("", ".", "..") for p in parts) or any(c in name for c in ("\\", ":")) or any(ord(c) < 32 for c in name):
+                  raise SystemExit(f"Invalid required path: {name!r}")
+              path = root.joinpath(*PurePosixPath(name).parts)
+              if not path.resolve().is_relative_to(root):
+                  raise SystemExit(f"Required path escapes checkout: {name!r}")
+              if not (path.is_file() or path.is_dir()):
+                  missing.append(name)
+          if missing:
+              raise SystemExit("Missing caller paths: " + ", ".join(missing))
+          if os.environ["CHECKOUT_SUBMODULES"] == "true":
+              status = subprocess.check_output(["git", "submodule", "status", "--recursive"], text=True)
+              if any(not line.startswith(" ") for line in status.splitlines()):
+                  raise SystemExit("Submodules not initialized at their pinned revisions")
+          print("Caller checkout preflight passed")
+          PYTHON
+
+  engines:
     needs: plan
+    if: inputs.engine-revision != ''
+    name: Shared engine · ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.engines) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      TARGET: ${{ matrix.target }}
+      ENGINE_REVISION: ${{ inputs.engine-revision }}
+      RUSTUP_TOOLCHAIN: "1.93.1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: myrqyry/obs-plugin-ci
+          ref: ${{ inputs.engine-revision }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Compile and bundle pinned engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ENGINE_REVISION"
+          rustup toolchain install 1.93.1 --profile minimal
+          cargo +1.93.1 build --release --locked
+          binary=target/release/obs-ci
+          if [[ "$TARGET" == windows-x64 ]]; then binary+=.exe; fi
+          python scripts/engine_bundle.py pack --target "$TARGET" --revision "$ENGINE_REVISION" \
+            --binary "$binary" --directory "$RUNNER_TEMP/engine-bundle"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: obs-ci-engine-${{ inputs.module }}-${{ inputs.package-name || inputs.module }}-${{ inputs.engine-revision }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/engine-bundle/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  build:
+    needs: [plan, engines]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.engines.result == 'success' || needs.engines.result == 'skipped') }}
     name: ${{ matrix.label }} · OBS ${{ matrix.obs }}
     strategy:
       fail-fast: false
@@ -94,6 +213,8 @@ jobs:
     timeout-minutes: 45
     env:
       TARGET: ${{ matrix.target }}
+      ENGINE_REVISION: ${{ inputs.engine-revision }}
+      OBS_CI_LINUX_SDK_CACHE: ${{ inputs.linux-sdk-cache && matrix.target == 'linux-x86_64' }}
       MODULE: ${{ inputs.module }}
       PUBLIC_NAME: ${{ inputs.package-name || inputs.module }}
       MINIMUM_TESTS: ${{ inputs.minimum-tests }}
@@ -105,6 +226,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: ${{ inputs.checkout-submodules && 'recursive' || 'false' }}
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        if: inputs.engine-revision != ''
+        with:
+          name: obs-ci-engine-${{ inputs.module }}-${{ inputs.package-name || inputs.module }}-${{ inputs.engine-revision }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/engine-received
+      - name: Restore verified shared engine
+        if: inputs.engine-revision != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          engine="$RUNNER_TEMP/obs-ci-engine"
+          test ! -e "$engine"
+          git init -q "$engine"
+          git -C "$engine" fetch --depth=1 https://github.com/myrqyry/obs-plugin-ci.git "$ENGINE_REVISION"
+          git -C "$engine" checkout --detach FETCH_HEAD
+          test "$(git -C "$engine" rev-parse HEAD)" = "$ENGINE_REVISION"
+          python "$engine/scripts/engine_bundle.py" verify --target "$TARGET" \
+            --revision "$ENGINE_REVISION" --directory "$RUNNER_TEMP/engine-received"
+          binary=obs-ci
+          if [[ "$TARGET" == windows-x64 ]]; then binary+=.exe; fi
+          mkdir -p "$engine/target/release"
+          cp "$RUNNER_TEMP/engine-received/$binary" "$engine/target/release/"
+          printf 'OBS_CI_ENGINE_ROOT=%s\n' "$engine" >> "$GITHUB_ENV"
       - name: Check README links and verifier tests
         if: runner.os == 'Linux' && inputs.driver == 'native'
         run: |
@@ -124,6 +269,18 @@ jobs:
             libgl-dev libopengl-dev libwayland-dev wayland-protocols \
             libxkbcommon-dev libx11-dev libx11-xcb-dev libxcb1-dev \
             libxcb-xinput-dev libglib2.0-dev zlib1g-dev
+      - name: Prepare Linux SDK cache key
+        if: inputs.linux-sdk-cache && runner.os == 'Linux'
+        id: linux-sdk-key
+        shell: bash
+        run: bash "$OBS_CI_ENGINE_ROOT/scripts/run-linux-caller.sh" "$GITHUB_WORKSPACE" --sdk-cache-key
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        if: inputs.linux-sdk-cache && runner.os == 'Linux'
+        with:
+          path: |
+            ${{ runner.temp }}/caller-work/obs/sdk
+            ${{ runner.temp }}/caller-work/obs/SDK-RECEIPT.json
+          key: ${{ steps.linux-sdk-key.outputs.key }}
       - name: Prepare pinned OBS SDK
         if: runner.os == 'Linux' && inputs.driver == 'native'
         run: bash .github/scripts/prepare-obs32-sdk.sh "$RUNNER_TEMP/obs-sdk" "$OBS_VERSION"

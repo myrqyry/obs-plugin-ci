@@ -58,7 +58,7 @@ class Parity(unittest.TestCase):
                     rust = subprocess.run(args, capture_output=True)
                     self.assertEqual(py.returncode == 0, rust.returncode == 0, rust.stderr)
                     if py.returncode == 0:
-                        expected = json.loads(output.read_text(encoding="utf-8").split("=", 1)[1])
+                        expected = json.loads(output.read_text(encoding="utf-8").splitlines()[0].split("=", 1)[1])
                         selected = False
                         for row in expected["include"]:
                             row["emit_source"] = source and not selected and row["target"] == "linux-x86_64"
