@@ -15,15 +15,18 @@ esac
 CI_WORK="$RUNNER_TEMP/caller-work"
 mode="${2:-build}"
 cache="${OBS_CI_LINUX_SDK_CACHE:-false}"
-[[ "$mode" == build || "$mode" == --sdk-cache-key ]]
+[[ "$mode" == build || "$mode" == --sdk-cache-key || "$mode" == --sdk-only ]]
 [[ "$cache" == true || "$cache" == false ]]
+if [[ "$mode" == --sdk-only ]]; then
+    [[ "$cache" == true ]]
+fi
 if [[ "$mode" == --sdk-cache-key ]]; then
     [[ "$cache" == true && "${ENGINE_REVISION:-}" =~ ^[a-f0-9]{40}$ && -n "${GITHUB_OUTPUT:-}" ]]
 fi
 if [[ "$cache" == true ]]; then
     [[ -z "${OBS_CI_LOCAL_SDK:-}" && -z "${OBS_CI_LOCAL_BUILD:-}" ]]
 fi
-if [[ "$cache" == true && "$mode" == build ]]; then
+if [[ "$cache" == true && "$mode" != --sdk-cache-key ]]; then
     test -f "$CI_WORK/sdk-fingerprint.json"
 else
     mkdir "$CI_WORK"
@@ -88,6 +91,11 @@ fi
 test -f "$CI_SDK/lib/cmake/libobs/libobsConfig.cmake"
 grep -Eq "^#define LIBOBS_API_MAJOR_VER $CI_OBS_MAJOR$" "$CI_SDK/include/obs/obs-config.h"
 grep -Eq "^#define LIBOBS_API_MINOR_VER $CI_OBS_MINOR$" "$CI_SDK/include/obs/obs-config.h"
+# Specialized callers can retain their complete existing build/test/package
+# verifier. Only the pinned SDK provisioning is shared in this mode.
+if [[ "$mode" == --sdk-only ]]; then
+    exit 0
+fi
 if [[ -n "${OBS_CI_LOCAL_BUILD:-}" ]]; then
     [[ "${GITHUB_ACTIONS:-}" != true && -n "${OBS_CI_LOCAL_SDK:-}" ]]
     CI_BUILD="$(realpath "$OBS_CI_LOCAL_BUILD")"

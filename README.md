@@ -96,6 +96,16 @@ GitHub Actions repository-scoped cache, not a signed remote SDK attestation
 or cross-repository cache. Linux only; native Windows/macOS builds retain
 their existing verified SDK bootstrap.
 
+Specialized Linux verifiers can use the same cache without replacing their
+build/test/stage implementation: provide `.github/scripts/ci-project.sh`
+with the normal `ci_dependencies` hook, then invoke
+`run-linux-caller.sh "$GITHUB_WORKSPACE" --sdk-only` from the caller
+adapter after cache-key preparation/restoration. This performs the exact
+same fingerprint, pinned SDK build or receipt verification, and SDK
+version/header checks, then stops before plugin compilation. The existing
+verifier must use `$RUNNER_TEMP/caller-work/obs/sdk` and retain its
+test and package gates. SDK-only requires the opt-in cache path.
+
 Optional `source-package: true` is available for caller-owned drivers.
 On the Linux OBS 32.2.0 job, the caller must additionally prepare
 RUNNER_TEMP/plugin-ci-source with PUBLIC_NAME-source.tar.gz, its SHA256SUMS

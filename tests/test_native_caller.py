@@ -83,6 +83,60 @@ class NativeCallerTests(unittest.TestCase):
             self.assertFalse((work / "unexpected-build").exists())
             self.assertEqual((work / "obs/SDK-RECEIPT.json").read_text(), "{}")
 
+    @unittest.skipUnless(platform.system() == "Linux", "Linux SDK-only adapter")
+    def test_sdk_only_preserves_specialized_verifier_boundary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            engine = root / "engine"
+            script = engine / "scripts/run-linux-caller.sh"
+            script.parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / "scripts/run-linux-caller.sh", script)
+            binary = engine / "target/release/obs-ci"
+            binary.parent.mkdir(parents=True)
+            # Stub only the SDK acquisition boundary; the shell driver and
+            # caller hooks are real. Actual SDK builds are separate pilots.
+            binary.write_text("""#!/usr/bin/env bash
+set -eu
+if [[ "$1" == sdk-fingerprint ]]; then
+  echo '{"cache_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+elif [[ "$1" == sdk-prepare ]]; then
+  sdk="$RUNNER_TEMP/caller-work/obs/sdk"
+  mkdir -p "$sdk/lib/cmake/libobs" "$sdk/include/obs"
+  touch "$sdk/lib/cmake/libobs/libobsConfig.cmake"
+  printf '32.2.0\n' > "$sdk/OBS_SDK_VERSION"
+  printf '#define LIBOBS_API_MAJOR_VER 32\n#define LIBOBS_API_MINOR_VER 2\n' > "$sdk/include/obs/obs-config.h"
+  echo '{}'
+else
+  exit 80
+fi
+""")
+            binary.chmod(0o755)
+            caller_root = root / "caller"
+            hook = caller_root / ".github/scripts/ci-project.sh"
+            hook.parent.mkdir(parents=True)
+            hook.write_text('ci_dependencies(){ touch "$CI_WORK/dependencies-ran"; }\n'
+                            'ci_build(){ touch "$CI_WORK/unexpected-build"; exit 81; }\n')
+            env = {**os.environ, "TARGET": "linux-x86_64", "MODULE": "example",
+                   "PUBLIC_NAME": "example", "ARCHIVE": "example-linux-x86_64-obs32.2.0-test.tar.gz",
+                   "MINIMUM_TESTS": "1", "OBS_VERSION": "32.2.0", "RUNNER_TEMP": str(root),
+                   "OBS_CI_LINUX_SDK_CACHE": "true", "ENGINE_REVISION": "a" * 40,
+                   "GITHUB_OUTPUT": str(root / "output")}
+            for key in ("OBS_CI_LOCAL_SDK", "OBS_CI_LOCAL_BUILD"):
+                env.pop(key, None)
+            cmd = ["bash", str(script), str(caller_root)]
+            subprocess.run([*cmd, "--sdk-cache-key"], env=env, check=True, capture_output=True)
+            result = subprocess.run([*cmd, "--sdk-only"], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            work = root / "caller-work"
+            self.assertTrue((work / "obs/sdk/OBS_SDK_VERSION").is_file())
+            self.assertFalse((work / "unexpected-build").exists())
+            self.assertFalse((root / "plugin-ci").exists())
+            # A modified preflight fingerprint must block SDK use.
+            (work / "sdk-fingerprint.json").write_text("{}")
+            self.assertNotEqual(subprocess.run([*cmd, "--sdk-only"], env=env,
+                                              capture_output=True).returncode, 0)
+            self.assertFalse((work / "unexpected-build").exists())
+
     def test_configure_hook_contract(self):
         from types import SimpleNamespace
         args = (Path("caller"), Path("work"), "windows-x64", "32.2.0")
