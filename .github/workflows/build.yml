@@ -32,6 +32,10 @@ on:
         description: Optional immutable obs-plugin-ci engine commit for same-run executable reuse (caller driver)
         type: string
         default: ""
+      linux-sdk-cache:
+        description: Opt in to exact-environment verified Linux SDK caching (shared caller adapter)
+        type: boolean
+        default: false
       source-package:
         description: Upload separately verified source archive and payload manifest
         type: boolean
@@ -67,6 +71,7 @@ jobs:
           PUBLIC_NAME: ${{ inputs.package-name || inputs.module }}
           MINIMUM_TESTS: ${{ inputs.minimum-tests }}
           ENGINE_REVISION: ${{ inputs.engine-revision }}
+          LINUX_SDK_CACHE: ${{ inputs.linux-sdk-cache }}
         run: |
           python3 - <<'PYTHON'
           import json, os, re
@@ -83,6 +88,9 @@ jobs:
           engine = os.environ.get("ENGINE_REVISION", "")
           if engine and (driver != "caller" or not re.fullmatch(r"[a-f0-9]{40}", engine)):
               raise SystemExit("Engine reuse requires caller driver and a full lowercase commit SHA")
+          cache = os.environ.get("LINUX_SDK_CACHE", "false")
+          if cache not in ("true", "false") or (cache == "true" and not engine):
+              raise SystemExit("Linux SDK caching requires a pinned shared engine")
           rows = [
               {'target': 'linux-x86_64', 'label': 'Linux x86_64', 'runner': 'ubuntu-24.04', 'obs': '32.2.0', 'extension': 'tar.gz'},
               {'target': 'windows-x64', 'label': 'Windows x64', 'runner': 'windows-2025-vs2026', 'obs': '32.2.0', 'extension': 'zip'},
@@ -206,6 +214,7 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       ENGINE_REVISION: ${{ inputs.engine-revision }}
+      OBS_CI_LINUX_SDK_CACHE: ${{ inputs.linux-sdk-cache && matrix.target == 'linux-x86_64' }}
       MODULE: ${{ inputs.module }}
       PUBLIC_NAME: ${{ inputs.package-name || inputs.module }}
       MINIMUM_TESTS: ${{ inputs.minimum-tests }}
@@ -260,6 +269,18 @@ jobs:
             libgl-dev libopengl-dev libwayland-dev wayland-protocols \
             libxkbcommon-dev libx11-dev libx11-xcb-dev libxcb1-dev \
             libxcb-xinput-dev libglib2.0-dev zlib1g-dev
+      - name: Prepare Linux SDK cache key
+        if: inputs.linux-sdk-cache && runner.os == 'Linux'
+        id: linux-sdk-key
+        shell: bash
+        run: bash "$OBS_CI_ENGINE_ROOT/scripts/run-linux-caller.sh" "$GITHUB_WORKSPACE" --sdk-cache-key
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        if: inputs.linux-sdk-cache && runner.os == 'Linux'
+        with:
+          path: |
+            ${{ runner.temp }}/caller-work/obs/sdk
+            ${{ runner.temp }}/caller-work/obs/SDK-RECEIPT.json
+          key: ${{ steps.linux-sdk-key.outputs.key }}
       - name: Prepare pinned OBS SDK
         if: runner.os == 'Linux' && inputs.driver == 'native'
         run: bash .github/scripts/prepare-obs32-sdk.sh "$RUNNER_TEMP/obs-sdk" "$OBS_VERSION"

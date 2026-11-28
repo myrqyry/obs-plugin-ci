@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -41,6 +42,46 @@ class NativeCallerTests(unittest.TestCase):
             result = subprocess.run(["bash", str(script), str(caller_root)],
                                     env={**env, "PUBLIC_NAME": "../bad", "RUNNER_TEMP": str(root / "invalid")}, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 42)
+
+    @unittest.skipUnless(platform.system() == "Linux", "Linux SDK fingerprint")
+    def test_sdk_cache_key_uses_caller_dependency_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            engine = root / "engine"
+            script = engine / "scripts/run-linux-caller.sh"
+            script.parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / "scripts/run-linux-caller.sh", script)
+            binary = engine / "target/release/obs-ci"
+            binary.parent.mkdir(parents=True)
+            binary.symlink_to(ROOT / "target/debug/obs-ci")
+            caller_root = root / "caller"
+            hook = caller_root / ".github/scripts/ci-project.sh"
+            hook.parent.mkdir(parents=True)
+            hook.write_text('ci_dependencies(){ touch "$CI_WORK/dependencies-ran"; }\n'
+                            'ci_build(){ touch "$CI_WORK/unexpected-build"; }\n')
+            env = {**os.environ, "TARGET": "linux-x86_64", "MODULE": "example",
+                   "PUBLIC_NAME": "example", "ARCHIVE": "example-linux-x86_64-obs32.2.0-test.tar.gz",
+                   "MINIMUM_TESTS": "1", "OBS_VERSION": "32.2.0", "RUNNER_TEMP": str(root),
+                   "OBS_CI_LINUX_SDK_CACHE": "true", "ENGINE_REVISION": "a" * 40,
+                   "GITHUB_OUTPUT": str(root / "output")}
+            for key in ("OBS_CI_LOCAL_SDK", "OBS_CI_LOCAL_BUILD"):
+                env.pop(key, None)
+            cmd = ["bash", str(script), str(caller_root)]
+            result = subprocess.run([*cmd, "--sdk-cache-key"], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            work = root / "caller-work"
+            self.assertTrue((work / "dependencies-ran").is_file())
+            fingerprint = subprocess.check_output([str(binary), "sdk-fingerprint", "--obs-version", "32.2.0",
+                          "--recipe", "legacy-core", "--work", str(work / "obs")], text=True)
+            key = json.loads(fingerprint)["cache_key"]
+            self.assertEqual((root / "output").read_text().strip(), f"key=obs-ci-sdk-v1-{'a' * 40}-{key}")
+            # A partial restored cache must fail closed before compiling a plugin.
+            (work / "obs/sdk").mkdir(parents=True)
+            (work / "obs/SDK-RECEIPT.json").write_text("{}")
+            result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((work / "unexpected-build").exists())
+            self.assertEqual((work / "obs/SDK-RECEIPT.json").read_text(), "{}")
 
     def test_native_layouts(self):
         for version in ("32.2.0", "33.0.3"):

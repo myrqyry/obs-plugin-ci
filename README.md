@@ -82,6 +82,20 @@ the engine. Existing callers are unchanged unless they opt in; the engine
 bundle is an internal test artifact even if plugin artifact upload is disabled.
 Use a fresh dispatch for full retries of the engine-producing jobs.
 
+Caller adapters invoking the shared Linux driver may also opt in with
+`linux-sdk-cache: true` alongside `engine-revision`. This runs the caller's
+dependency hook before computing the fingerprint and stores only the installed
+SDK tree and its receipt at the original absolute prefix. The exact cache key
+binds the shared engine SHA, SDK recipe, host/package database, compiler/tool
+digests and workspace. There are no fallback keys. Restored SDKs are rehashed
+and the receipt verified before any plugin build; partial/mismatched caches
+fail closed. Cache miss builds from the original checksum-pinned OBS source.
+The dependency hook must be safe to run as a separate preparation step;
+build/test/stage hooks retain their original execution. This is a trusted
+GitHub Actions repository-scoped cache, not a signed remote SDK attestation
+or cross-repository cache. Linux only; native Windows/macOS builds retain
+their existing verified SDK bootstrap.
+
 Optional `source-package: true` is available for caller-owned drivers.
 On the Linux OBS 32.2.0 job, the caller must additionally prepare
 RUNNER_TEMP/plugin-ci-source with PUBLIC_NAME-source.tar.gz, its SHA256SUMS

@@ -202,6 +202,25 @@ class Contract(unittest.TestCase):
         names = [s.get("name") for s in self.steps]
         self.assertLess(names.index("Restore verified shared engine"), names.index("Build and verify caller package"))
 
+    def test_sdk_cache_requires_verified_engine_and_runs_after_dependencies(self):
+        pin = "a" * 40
+        self.assertIsNone(self.plan("linux", "caller", ENGINE_REVISION="", LINUX_SDK_CACHE="true"))
+        self.assertIsNotNone(self.plan("linux", "caller", ENGINE_REVISION=pin, LINUX_SDK_CACHE="true"))
+        self.assertIsNone(self.plan("full", "native", ENGINE_REVISION="", LINUX_SDK_CACHE="true"))
+        steps = self.steps
+        names = [s.get("name") for s in steps]
+        preflight = names.index("Prepare Linux SDK cache key")
+        restore = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/cache@"))
+        self.assertLess(names.index("Install native Linux dependencies"), preflight)
+        self.assertLess(names.index("Restore verified shared engine"), preflight)
+        self.assertLess(preflight, restore)
+        self.assertLess(restore, names.index("Build and verify caller package"))
+        cache = steps[restore]["with"]
+        self.assertNotIn("restore-keys", cache)
+        self.assertEqual(cache["path"].splitlines(),
+                         ["${{ runner.temp }}/caller-work/obs/sdk",
+                          "${{ runner.temp }}/caller-work/obs/SDK-RECEIPT.json"])
+
     def test_all_eight_distinct_platform_version_pairs(self):
         rows = self.plan("full")
         self.assertEqual({(r["target"], r["obs"]) for r in rows},
