@@ -8,6 +8,34 @@ case "$version" in
   33.0.3) sha=b0eff217a972e1dd9951ce24d66595c723dde847461b16de07eb33d75ec34659; extra=(-DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF) ;;
   *) echo "Unsupported OBS SDK: $version" >&2; exit 1 ;;
 esac
+# A side-by-side FFmpeg 8 development install for older Linux desktops.
+# Never apply a local override to a hosted qualification or OBS32.
+if [[ -n "${OBS_CI_LOCAL_FFMPEG_PREFIX:-}" ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" == true || "$version" != 33.0.3 ]]; then
+    echo "FFmpeg override is only supported for local OBS33" >&2
+    exit 2
+  fi
+  if [[ "$OBS_CI_LOCAL_FFMPEG_PREFIX" != /* || ! -d "$OBS_CI_LOCAL_FFMPEG_PREFIX/lib/pkgconfig" ]]; then
+    echo "Invalid local FFmpeg prefix" >&2
+    exit 2
+  fi
+  ffmpeg="$(realpath "$OBS_CI_LOCAL_FFMPEG_PREFIX")"
+  export PKG_CONFIG_PATH="$ffmpeg/lib/pkgconfig"
+  # Verify all required components resolve to the same prefix and FFmpeg 8 ABI.
+  for spec in avcodec:62 avformat:62 avutil:60 swscale:9 swresample:6; do
+    component="${spec%:*}"
+    major="${spec#*:}"
+    if [[ "$(pkg-config --variable=prefix "lib$component")" != "$ffmpeg" ||
+          "$(pkg-config --modversion "lib$component")" != "$major".* ||
+          ! -s "$ffmpeg/lib/lib$component.so" ]]; then
+      echo "Invalid local FFmpeg component: lib$component (expected major $major at $ffmpeg)" >&2
+      exit 2
+    fi
+  done
+  export LD_LIBRARY_PATH="$ffmpeg/lib"
+  extra+=("-DCMAKE_PREFIX_PATH=$ffmpeg")
+  echo "Using isolated local FFmpeg 8 development prefix: $ffmpeg"
+fi
 sdk="$work/sdk"
 archive="$work/obs-studio-$version.tar.gz"
 mkdir -p "$work"

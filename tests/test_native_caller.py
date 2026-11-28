@@ -151,6 +151,25 @@ fi
                                               capture_output=True).returncode, 0)
             self.assertFalse((work / "unexpected-build").exists())
 
+    @unittest.skipUnless(platform.system() == "Linux", "Local FFmpeg override")
+    def test_local_ffmpeg_override_fails_before_sdk_download(self):
+        script = ROOT / "scripts/prepare-linux-sdk.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {**os.environ, "OBS_CI_LOCAL_FFMPEG_PREFIX": str(root / "missing")}
+            for version, hosted, reason in (
+                ("32.2.0", "false", "only supported for local OBS33"),
+                ("33.0.3", "true", "only supported for local OBS33"),
+                ("33.0.3", "false", "Invalid local FFmpeg prefix"),
+            ):
+                with self.subTest(version=version, hosted=hosted):
+                    work = root / "sdk-work"
+                    result = subprocess.run(["bash", str(script), str(work), version],
+                        env={**env, "GITHUB_ACTIONS": hosted}, capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(reason, result.stderr)
+                    self.assertFalse(work.exists())
+
     def test_configure_hook_contract(self):
         from types import SimpleNamespace
         args = (Path("caller"), Path("work"), "windows-x64", "32.2.0")

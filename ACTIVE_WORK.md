@@ -369,3 +369,20 @@ rejected bytes, then exact tar transport/restoration passed. OBS33 local
 attempt rejected cache and started pinned rebuild but stopped because
 desktop FFmpeg 6.1 is below required 8.0; no system changes. Hosted new
 namespace and OBS33 rebuild remain to qualify.
+
+## Local OBS33 FFmpeg 8 development path
+Linux Mint 22.3/Noble has FFmpeg 6.1.1; existing OBS32 links its ABI.
+Installed official FFmpeg 8.1.3 shared build in a separate versioned
+user prefix, signature verified against the official fingerprint and
+source SHA-256 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3.
+Native H.264/AAC encode/probe/decode passed; ffmpeg8/ffprobe8 expose
+the new executables without changing the default ffmpeg. Existing
+OBS32 linkage remains FFmpeg 6. Local-only shell SDK prefix opt-in
+rejects hosted, OBS32 and invalid prefixes before download; seven
+native caller contract tests passed. Real pinned OBS33.0.3 SDK
+built successfully with all five header/library paths resolving to
+FFmpeg 8.1.3, verified dynamic linkage, copied relocatable installed
+SDK to a persistent user-local versioned prefix. No production OBS
+installation, hosted cache changes, global linker configuration or
+system package upgrades. This local path uses shell SDK preparation,
+not the Rust fingerprinted hosted cache.

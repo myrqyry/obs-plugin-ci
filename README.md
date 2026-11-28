@@ -202,6 +202,22 @@ OBS version. It is the EmuLens b72651e recipe (not the experimental Rust
 SDK executor). Keep the caller's dependency/feature/test requirements
 separate; the standalone reusable workflow remains backward compatible.
 
+On an older Linux development host with a separate FFmpeg 8 shared-library
+and header installation, the shell SDK recipe accepts an explicit local
+prefix for OBS 33.0.3:
+
+    OBS_CI_LOCAL_FFMPEG_PREFIX="$HOME/.local/opt/ffmpeg-8.1.3" bash scripts/prepare-linux-sdk.sh /path/to/fresh-work 33.0.3
+
+The override is rejected for OBS32 and hosted Actions jobs. All five
+FFmpeg component prefixes and ABI majors are validated before downloading
+OBS, and CMake is directed to the chosen prefix. For local caller builds
+and runtime checks, explicitly set PKG_CONFIG_PATH to that prefix's
+lib/pkgconfig and LD_LIBRARY_PATH to its lib directory plus the chosen
+SDK's lib directory as appropriate. Do not globally export these paths
+or mix FFmpeg ABI generations into an existing OBS process. This is a
+local SDK qualification path, not a hosted cache or a replacement of
+the system OBS installation.
+
 For source packages:
 
     ./target/release/obs-ci audit-source /path/to/plugin-source.tar.gz --binary /path/to/plugin-test.tar.gz
