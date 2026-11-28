@@ -75,7 +75,7 @@ def configure_args(hook, root, work, target, version):
         args = list(value)
     except TypeError as exc:
         raise ValueError("Caller configure hook must return an iterable of argument strings") from exc
-    if any(not isinstance(arg, str) or not arg or "\\0" in arg for arg in args):
+    if any(not isinstance(arg, str) or not arg or chr(0) in arg for arg in args):
         raise ValueError("Caller configure hook returned an invalid argument string")
     return args
 
