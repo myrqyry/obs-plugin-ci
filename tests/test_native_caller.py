@@ -10,6 +10,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import native_caller as caller
 
 class NativeCallerTests(unittest.TestCase):
+    def test_configure_hook_contract(self):
+        from types import SimpleNamespace
+        args = (Path("caller"), Path("work"), "windows-x64", "32.2.0")
+        for value in (None, "-DFOO=ON", b"-DFOO=ON", ["-DFOO=ON", 42], [""], ["bad" + chr(0)], {"-DFOO=ON": True}):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "configure"):
+                caller.configure_args(SimpleNamespace(configure=lambda *a: value), *args)
+        hook = SimpleNamespace(configure=lambda *a: iter(["-DFOO=ON", "-DBAR=OFF"]))
+        self.assertEqual(caller.configure_args(hook, *args), ["-DFOO=ON", "-DBAR=OFF"])
+
     def test_native_layouts(self):
         for version in ("32.2.0", "33.0.3"):
             for target in ("windows-x64", "macos-arm64", "macos-x86_64"):

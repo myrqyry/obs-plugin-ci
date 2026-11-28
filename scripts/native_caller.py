@@ -66,6 +66,20 @@ def load_hook(root):
     return hook
 
 
+def configure_args(hook, root, work, target, version):
+    """Validate the caller hook result before passing it to CMake."""
+    value = hook.configure(root, work, target, version)
+    if isinstance(value, (str, bytes, dict)):
+        raise ValueError("Caller configure hook must return an iterable of argument strings")
+    try:
+        args = list(value)
+    except TypeError as exc:
+        raise ValueError("Caller configure hook must return an iterable of argument strings") from exc
+    if any(not isinstance(arg, str) or not arg or chr(0) in arg for arg in args):
+        raise ValueError("Caller configure hook returned an invalid argument string")
+    return args
+
+
 def main():
     root = Path(sys.argv[1]).resolve()
     module, target, version, archive = (os.environ[k] for k in ("MODULE", "TARGET", "OBS_VERSION", "ARCHIVE"))
@@ -105,7 +119,7 @@ def main():
             "-DCMAKE_PREFIX_PATH=" + ";".join(p.as_posix() for p in [prefix, *deps]),
             "-Dlibobs_DIR=" + sdk.config_dir(prefix, "libobs").as_posix(),
             "-Dobs-frontend-api_DIR=" + sdk.config_dir(prefix, "obs-frontend-api").as_posix(),
-            *hook.configure(root, work, target, version))
+            *configure_args(hook, root, work, target, version))
     sdk.run("cmake", "--build", build, "--config", "RelWithDebInfo", "--parallel", "4")
     sdk.run("cmake", "--install", build, "--config", "RelWithDebInfo", "--prefix", installed)
     binary = hook.stage(root, installed, stage, target, version)
