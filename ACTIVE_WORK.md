@@ -307,3 +307,16 @@ cross-host cache reuse. Unmanaged dependencies remain outside the
 fingerprint. Next hosted qualification and actual OBS SDK pilot, then
 evaluate portable SDK/cache receipts and declarative package policies.
 Production workflows untouched; no push.
+
+## Shared package writer and Linux-only matrix
+
+Added Rust pack and payload-manifest commands: caller prepares a quiescent
+stage; engine writes ZIP or tar.gz, preserves Unix file modes, hashes and
+re-reads exact bytes via existing auditor, refuses links, unsafe names,
+case collisions and existing output directories. No source policy or ABI
+claim implicit. Added linux profile (both OBS32.2.0 and 33.0.3) with Rust
+planner and production workflow parity. Copied the exact hosted-qualified
+EmuLens Linux SDK script for pinned reuse; experimental SDK executor remains
+separate. 40 local test methods passed, fmt, Clippy and release build passed.
+No existing caller pin changes. New branch is a candidate for HyperDSP's
+Linux-only pilot; hosted qualification not established.

@@ -51,7 +51,7 @@ caller repository, assume artifacts are externally downloadable.
 
 The default profile is `full` (eight target/version combinations).
 `profile: linux-obs32` selects only the established Ubuntu 24.04 / OBS 32.2.0
-target; unsupported profiles and invalid module/package identifiers or Linux test floors
+target; `profile: linux` selects both Linux SDK versions without allocating unqualified Windows/macOS runners. Unsupported profiles and invalid module/package identifiers or Linux test floors
 fail at planning before native runners are allocated.
 The default driver preserves the original pinned SDK verifier contract.
 With `driver: caller`, the shared workflow runs the caller's
@@ -116,7 +116,7 @@ CI contract. Build it locally with Rust 1.93.1 (the toolchain tested here):
     ./target/release/obs-ci audit /path/to/module-test.zip
 
 On Windows use target/release/obs-ci.exe. The plan command accepts the
-current full and linux-obs32 profiles, driver and source-package options,
+current full, linux and linux-obs32 profiles, driver and source-package options,
 and optional comma-separated target and pinned OBS-version filters:
 
     ./target/release/obs-ci plan --module framerot --minimum-tests 18 --driver caller --source-package --targets linux-x86_64,windows-x64 --obs-versions 33.0.3
@@ -129,6 +129,27 @@ that a particular plugin has been qualified on those targets. Audit is read-only
 it checks the adjacent SHA256SUMS, ZIP or tar/gzip integrity, safe member
 paths and types, duplicate/case-colliding names, and basic payload exclusions.
 It prints a JSON receipt with archive name, SHA-256, size and file counts.
+To write a binary archive from a caller-prepared, isolated staging tree:
+
+    ./target/release/obs-ci pack --stage /path/to/payload --output /path/to/new-artifact-directory --archive-name example-test.tar.gz
+    ./target/release/obs-ci payload-manifest /path/to/new-artifact-directory/example-test.tar.gz
+
+The writer preserves regular-file modes (Unix), rejects links and unsafe
+archive paths, verifies every file digest against the staged inventory,
+and creates the archive plus SHA256SUMS in a fresh directory without
+overwriting existing files. It does not select module contents, install
+the plugin, or establish ABI compatibility. Use inspect-module and real
+caller runtime tests for those contracts. The output is not a crash-atomic
+multi-file transaction; use a private, quiescent staging/output workspace.
+The manifest command audits the resulting archive and emits sorted
+per-file SHA-256 entries for a source package's PAYLOAD-SHA256SUMS.
+
+For Linux callers needing the already hosted-tested shell SDK preparation
+recipe, scripts/prepare-linux-sdk.sh takes a work directory and pinned
+OBS version. It is the EmuLens b72651e recipe (not the experimental Rust
+SDK executor). Keep the caller's dependency/feature/test requirements
+separate; the standalone reusable workflow remains backward compatible.
+
 For source packages:
 
     ./target/release/obs-ci audit-source /path/to/plugin-source.tar.gz --binary /path/to/plugin-test.tar.gz
@@ -282,3 +303,19 @@ The actual shared configure/build/install and receipt reuse path was
 exercised on a small native CMake fixture, not a full OBS build. Full
 OBS qualification and any integration with production callers remain
 pending; current desktop disk availability is below the guard threshold.
+
+### Verification without distribution
+
+Set `upload-artifacts: false` to keep all build, test, archive and checksum gates while disabling both upload steps. This is useful for license-sensitive or source-only qualification. Existing pins and default upload behavior are unchanged.
+
+### Full native caller packages
+
+A caller using the Linux shell hook can dispatch Windows/macOS to
+\`python scripts/native_caller.py <caller-root>\` instead. This uses the
+same pinned native OBS source/dependency recipe qualified by EmuLens
+and Unscene. Project-specific \`.github/scripts/ci-native.py\` supplies
+configure options and validates the installed assets before packaging.
+The shared Rust writer and native inspector verify the resulting
+version-specific ZIP. Native compile/package qualification is distinct
+from the caller's required Linux runtime suite. No disabled production
+feature or native runtime pass is implied.

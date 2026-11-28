@@ -3,7 +3,7 @@ use std::{error::Error, fs, io::Write, path::Path};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     let stem = name
         .strip_suffix(".tar.gz")
         .or_else(|| name.strip_suffix(".zip"));

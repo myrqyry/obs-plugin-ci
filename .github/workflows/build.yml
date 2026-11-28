@@ -13,7 +13,7 @@ on:
         type: string
         default: ""
       profile:
-        description: Qualified matrix (full or linux-obs32)
+        description: Matrix (full, linux, or linux-obs32)
         type: string
         default: full
       driver:
@@ -24,6 +24,10 @@ on:
         description: Upload separately verified source archive and payload manifest
         type: boolean
         default: false
+      upload-artifacts:
+        description: Upload audited packages (false retains verification without distribution)
+        type: boolean
+        default: true
       minimum-tests:
         description: Minimum Linux regression test count
         required: true
@@ -58,7 +62,7 @@ jobs:
           if not re.fullmatch(r"[1-9][0-9]*", os.environ["MINIMUM_TESTS"]):
               raise SystemExit("Invalid MINIMUM_TESTS: expected a positive integer")
           profile, driver, source = (os.environ[k] for k in ("PROFILE", "DRIVER", "SOURCE_PACKAGE"))
-          if profile not in ("full", "linux-obs32") or driver not in ("native", "caller"):
+          if profile not in ("full", "linux-obs32", "linux") or driver not in ("native", "caller"):
               raise SystemExit("Unsupported matrix profile or driver")
           if source not in ("true", "false") or (source == "true" and driver != "caller"):
               raise SystemExit("Source packages require a caller-owned verifier")
@@ -72,6 +76,8 @@ jobs:
               {'target': 'macos-arm64', 'label': 'macOS Apple Silicon', 'runner': 'macos-26', 'obs': '33.0.3', 'extension': 'zip'},
               {'target': 'macos-x86_64', 'label': 'macOS Intel', 'runner': 'macos-26-intel', 'obs': '33.0.3', 'extension': 'zip'},
           ]
+          if profile == "linux":
+              rows = [r for r in rows if r["target"] == "linux-x86_64"]
           if profile == "linux-obs32":
               rows = [r for r in rows if r["target"] == "linux-x86_64" and r["obs"] == "32.2.0"]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
@@ -330,6 +336,7 @@ jobs:
               seen.add(name)
           PYTHON
       - name: Upload verified test package
+        if: inputs.upload-artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ inputs.package-name || inputs.module }}-${{ matrix.target }}-obs${{ matrix.obs }}-test
@@ -341,7 +348,7 @@ jobs:
           compression-level: 0
 
       - name: Upload verified source package
-        if: inputs.source-package && matrix.target == 'linux-x86_64' && matrix.obs == '32.2.0'
+        if: inputs.upload-artifacts && inputs.source-package && matrix.target == 'linux-x86_64' && matrix.obs == '32.2.0'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ inputs.package-name || inputs.module }}-source

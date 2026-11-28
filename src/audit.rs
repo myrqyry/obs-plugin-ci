@@ -98,7 +98,7 @@ fn regular_file(path: &Path) -> Result<File> {
     Ok(File::open(path)?)
 }
 
-fn digest(file: &mut impl Read) -> Result<String> {
+pub(crate) fn digest(file: &mut impl Read) -> Result<String> {
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
     loop {
@@ -221,6 +221,19 @@ fn inspect(
         },
         members,
     ))
+}
+
+pub(crate) fn archive_hashes(path: &Path) -> Result<(Receipt, BTreeMap<String, String>)> {
+    let (receipt, members) = inspect(path, false, true, None)?;
+    Ok((receipt, members.hashes))
+}
+
+pub(crate) fn payload_checksums(path: &Path) -> Result<String> {
+    let (_, hashes) = archive_hashes(path)?;
+    Ok(hashes
+        .iter()
+        .map(|(name, hash)| format!("{hash}  {name}\n"))
+        .collect())
 }
 
 pub fn audit(path: &Path) -> Result<Receipt> {

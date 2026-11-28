@@ -239,7 +239,10 @@ pub fn fingerprint(plan: &Plan, work: &Path) -> Result<Fingerprint> {
         "as",
         "strip",
     ] {
-        let path = Path::new("/usr/bin").join(name).canonicalize()?;
+        let requested = Path::new("/usr/bin").join(name);
+        let path = requested
+            .canonicalize()
+            .map_err(|err| format!("Required SDK tool {}: {err}", requested.display()))?;
         tools.insert(
             name.into(),
             format!("{}:{}", path.display(), hash_file(&path)?),

@@ -17,17 +17,28 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/build.yml"
 
 def shell_command(step):
+    # These contract steps are pure Python heredocs. Use the already-selected
+    # interpreter, avoiding Windows Git Bash alias and PATH translation.
     script = step["run"]
-    if os.name == "nt" and script.startswith("python3 - "):
-        script = script.replace("python3 - ", "python - ", 1)
-    return ["bash", "-c", script]
+    header, sep, body = script.partition("<<'PYTHON'\n")
+    if not sep or header.strip() not in ("python -", "python3 -"):
+        raise ValueError("Expected a pure Python workflow step")
+    code, sep, tail = body.rpartition("\nPYTHON")
+    if not sep or tail.strip():
+        raise ValueError("Unexpected trailing shell commands")
+    return [sys.executable, "-c", code]
 
 
 def make_archive(path, entries=(("example/bin/plugin.so", b"module"),)):
     if path.suffix == ".zip":
         with zipfile.ZipFile(path, "w") as archive:
             for name, data in entries:
-                archive.writestr(name, data)
+                # ZipInfo normalizes backslashes on Windows. Set the raw
+                # name after construction so the malformed fixture is identical
+                # on every host, not a valid archive on just one host.
+                member = zipfile.ZipInfo(name)
+                member.filename = name
+                archive.writestr(member, data)
     else:
         with tarfile.open(path, "w:gz") as archive:
             for name, data in entries:
@@ -57,6 +68,24 @@ class Contract(unittest.TestCase):
                 return None
             return json.loads(output.read_text().strip().split("=",1)[1])["include"]
 
+    def test_malformed_zip_fixture_keeps_raw_backslashes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "unsafe.zip"
+            raw = "folder\\outside"
+            make_archive(path, ((raw, b"fixture"),))
+            # Check the raw local and central directory names, before any
+            # reader normalizes platform-specific separators.
+            self.assertEqual(path.read_bytes().count(raw.encode()), 2)
+            with zipfile.ZipFile(path) as archive:
+                self.assertEqual(archive.infolist()[0].orig_filename, raw)
+
+    def test_embedded_python_uses_active_interpreter(self):
+        step = {"run": "python - <<'PYTHON'\nimport sys; print(sys.executable)\nPYTHON\n"}
+        command = shell_command(step)
+        self.assertEqual(command[:2], [sys.executable, "-c"])
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), Path(sys.executable).resolve())
+
     def test_workflow_permissions_and_action_pins(self):
         for path in WORKFLOW.parent.glob("*.yml"):
             workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
@@ -76,6 +105,11 @@ class Contract(unittest.TestCase):
             {(p,v) for p in ("linux-x86_64","windows-x64","macos-arm64","macos-x86_64")
              for v in ("32.2.0","33.0.3")})
         self.assertEqual(len(rows),8)
+
+    def test_linux_both_sdk_versions(self):
+        rows = self.plan("linux", "caller", "true")
+        self.assertEqual([(r["target"], r["obs"]) for r in rows],
+                         [("linux-x86_64", "32.2.0"), ("linux-x86_64", "33.0.3")])
 
     def test_qualified_linux_subset_and_invalid_profiles(self):
         rows=self.plan("linux-obs32","caller","true")
@@ -106,6 +140,15 @@ class Contract(unittest.TestCase):
         self.assertIn("inputs.package-name", upload["with"]["name"])
         self.assertIn("matrix.target", upload["with"]["name"])
         self.assertIn("matrix.obs", upload["with"]["name"])
+
+    def test_no_upload_keeps_verification(self):
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["upload-artifacts"]["default"], "true")
+        steps = {s.get("name"): s for s in self.steps}
+        self.assertEqual(steps["Upload verified test package"]["if"], "inputs.upload-artifacts")
+        self.assertIn("inputs.upload-artifacts &&", steps["Upload verified source package"]["if"])
+        self.assertNotIn("if", steps["Verify artifact handoff"])
+        self.assertNotIn("upload-artifacts", steps["Verify source package"]["if"])
 
     def test_checksum_gate_accepts_only_matching_named_package(self):
         step = next(s for s in self.steps if s.get("name")=="Verify artifact handoff")
