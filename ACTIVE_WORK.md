@@ -386,3 +386,5 @@ SDK to a persistent user-local versioned prefix. No production OBS
 installation, hosted cache changes, global linker configuration or
 system package upgrades. This local path uses shell SDK preparation,
 not the Rust fingerprinted hosted cache.
+
+Aftermarket checkpoint 329df2e: independent clean local OBS33.0.3 / Qt6.4.2 / FFmpeg8.1.3 Release build passed all 49 CTests without skips and verified the four-file modern package, restart helper, archive checksum and ELF exports. The full OBS33 frontend was not installed or launched. Evidence: /tmp/aftermarket-local-obs33.gBeMkP/pilot.log.
