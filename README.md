@@ -88,8 +88,16 @@ dependency hook before computing the fingerprint and stores only the installed
 SDK tree and its receipt at the original absolute prefix. The exact cache key
 binds the shared engine SHA, SDK recipe, host/package database, compiler/tool
 digests and workspace. There are no fallback keys. Restored SDKs are rehashed
-and the receipt verified before any plugin build; partial/mismatched caches
-fail closed. Cache miss builds from the original checksum-pinned OBS source.
+and the receipt verified before any plugin build. In the explicit hosted
+cache-preparation phase, rejected restored directories are quarantined
+without trusting any bytes, then rebuilt at the original prefix from
+checksum-pinned OBS source. An environment change or failed fresh build
+still fails the job. Cache misses are saved immediately after SDK verification,
+before caller build/tests can alter the tree. The cache is immutable: an
+existing bad key cannot be overwritten, so subsequent attempts rebuild until
+that entry expires or is explicitly evicted. The new engine pin creates a
+new cache namespace. Direct sdk-prepare and caller build modes still reject
+modified SDKs without automatic repair.
 The dependency hook must be safe to run as a separate preparation step;
 build/test/stage hooks retain their original execution. This is a trusted
 GitHub Actions repository-scoped cache, not a signed remote SDK attestation

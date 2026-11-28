@@ -357,10 +357,23 @@ pub fn verify_installed(plan: &Plan, work: &Path) -> Result<InstalledReceipt> {
     }
     let expected: InstalledReceipt = serde_json::from_reader(File::open(path)?)?;
     let actual = installed_receipt(plan, fp)?;
-    if expected != actual {
-        return Err(
-            "SDK receipt mismatch: environment, install prefix or installed tree changed".into(),
-        );
+    if expected.fingerprint != actual.fingerprint {
+        return Err("SDK receipt mismatch: environment or install prefix changed".into());
+    }
+    if expected.entries != actual.entries {
+        for (name, entry) in &expected.entries {
+            match actual.entries.get(name) {
+                None => return Err(format!("SDK receipt mismatch: missing entry {name}").into()),
+                Some(found) if found != entry => {
+                    return Err(format!(
+                        "SDK receipt mismatch: changed entry {name} (expected kind={}, mode={:o}; actual kind={}, mode={:o}; content/link changed={})",
+                        entry.kind, entry.mode, found.kind, found.mode, entry.value != found.value
+                    ).into());
+                }
+                _ => (),
+            }
+        }
+        return Err("SDK receipt mismatch: unexpected installed entry".into());
     }
     Ok(actual)
 }
@@ -561,7 +574,9 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/obs-frontend-apiConfig.cmake" DESTINA
         std::os::unix::fs::symlink(target, &link).unwrap();
         assert_eq!(verify_installed(&plan, &work).unwrap(), receipt);
         fs::write(sdk.join("lib/libobs-frontend-api.so.1.0"), b"changed").unwrap();
-        assert!(verify_installed(&plan, &work).is_err());
+        let error = verify_installed(&plan, &work).unwrap_err().to_string();
+        assert!(error.contains("changed entry lib/libobs-frontend-api.so.1.0"));
+        assert!(error.contains("content/link changed=true"));
         assert!(prepare(&plan, &unused_cache, &work, 4).is_err());
         assert!(!unused_cache.exists());
     }

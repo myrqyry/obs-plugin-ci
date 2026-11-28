@@ -210,11 +210,17 @@ class Contract(unittest.TestCase):
         steps = self.steps
         names = [s.get("name") for s in steps]
         preflight = names.index("Prepare Linux SDK cache key")
-        restore = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/cache@"))
+        restore = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/cache/restore@"))
         self.assertLess(names.index("Install native Linux dependencies"), preflight)
         self.assertLess(names.index("Restore verified shared engine"), preflight)
         self.assertLess(preflight, restore)
-        self.assertLess(restore, names.index("Build and verify caller package"))
+        prepared = names.index("Verify or rebuild restored Linux SDK")
+        save = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/cache/save@"))
+        self.assertLess(restore, prepared)
+        self.assertLess(prepared, save)
+        self.assertLess(save, names.index("Build and verify caller package"))
+        self.assertEqual(steps[save]["with"], steps[restore]["with"])
+        self.assertIn("cache-hit", steps[save]["if"])
         cache = steps[restore]["with"]
         self.assertNotIn("restore-keys", cache)
         self.assertEqual(cache["path"].splitlines(),

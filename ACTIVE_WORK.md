@@ -354,3 +354,18 @@ qualification on candidate branch, then a small real caller pilot using
 both opt-ins before changing existing production pins. Cross-repository
 SDK distribution, targeted production matrix filters, cancellation,
 ecosystem dashboard and native runtime qualification remain separate work.
+
+## Hosted cache rejection recovery — Aftermarket run 46110039221
+OBS33 cache key matched and GitHub restored the SDK, but its exact receipt
+rejected the installed tree; old diagnostics cannot distinguish changed
+modes/content from fingerprint mismatch. OBS32 cache miss passed and saved.
+Split restore and save, verify or quarantine/rebuild at the exact prefix
+before caller compilation, save only a freshly verified miss, retain strict
+verification in the actual caller phase. Report the first changed SDK entry
+and mode/content distinction. No cache data deletion or relaxed verification.
+All 54 local shared checks passed, strict Rust/clippy and actionlint passed.
+Real pinned OBS32 SDK rebuilt after deliberately invalid receipt, preserved
+rejected bytes, then exact tar transport/restoration passed. OBS33 local
+attempt rejected cache and started pinned rebuild but stopped because
+desktop FFmpeg 6.1 is below required 8.0; no system changes. Hosted new
+namespace and OBS33 rebuild remain to qualify.

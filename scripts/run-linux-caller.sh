@@ -15,9 +15,9 @@ esac
 CI_WORK="$RUNNER_TEMP/caller-work"
 mode="${2:-build}"
 cache="${OBS_CI_LINUX_SDK_CACHE:-false}"
-[[ "$mode" == build || "$mode" == --sdk-cache-key || "$mode" == --sdk-only ]]
+[[ "$mode" == build || "$mode" == --sdk-cache-key || "$mode" == --sdk-only || "$mode" == --sdk-cache-restore ]]
 [[ "$cache" == true || "$cache" == false ]]
-if [[ "$mode" == --sdk-only ]]; then
+if [[ "$mode" == --sdk-only || "$mode" == --sdk-cache-restore ]]; then
     [[ "$cache" == true ]]
 fi
 if [[ "$mode" == --sdk-cache-key ]]; then
@@ -73,10 +73,29 @@ if [[ "$cache" == true ]]; then
     else
         echo "Building pinned SDK (no exact cache hit)"
     fi
-    if ! "$CI_OBSCI" sdk-prepare "${fingerprint_args[@]}" \
-        --cache "$RUNNER_TEMP/obs-ci-sdk-sources" --jobs 4 > "$CI_WORK/sdk-receipt.json"; then
-        if [[ -f "$sdk_work/sdk-build.log" ]]; then tail -n 200 "$sdk_work/sdk-build.log" >&2; fi
-        exit 1
+    prepare_sdk() {
+        "$CI_OBSCI" sdk-prepare "${fingerprint_args[@]}" \
+            --cache "$RUNNER_TEMP/obs-ci-sdk-sources" --jobs 4 > "$CI_WORK/sdk-receipt.json"
+    }
+    restored=false
+    if [[ -e "$sdk_work" || -L "$sdk_work" ]]; then restored=true; fi
+    if ! prepare_sdk; then
+        if [[ "$mode" == --sdk-cache-restore && "$restored" == true ]]; then
+            # Only this workflow phase may recover a rejected cache. Do not
+            # trust or repair any of its bytes, and never remove user data.
+            [[ "$("$CI_OBSCI" sdk-fingerprint "${fingerprint_args[@]}")" == "$(cat "$CI_WORK/sdk-fingerprint.json")" ]]
+            quarantine=$(mktemp -d "$CI_WORK/rejected-sdk.XXXXXX")
+            rmdir "$quarantine"
+            mv -T -- "$sdk_work" "$quarantine"
+            echo "Rejected cached SDK quarantined at $quarantine; rebuilding from pinned sources" >&2
+            if ! prepare_sdk; then
+                if [[ -f "$sdk_work/sdk-build.log" ]]; then tail -n 200 "$sdk_work/sdk-build.log" >&2; fi
+                exit 1
+            fi
+        else
+            if [[ -f "$sdk_work/sdk-build.log" ]]; then tail -n 200 "$sdk_work/sdk-build.log" >&2; fi
+            exit 1
+        fi
     fi
     [[ "$(cat "$CI_SDK/OBS_SDK_VERSION")" == "$OBS_VERSION" ]]
 elif [[ -n "${OBS_CI_LOCAL_SDK:-}" ]]; then
@@ -93,7 +112,7 @@ grep -Eq "^#define LIBOBS_API_MAJOR_VER $CI_OBS_MAJOR$" "$CI_SDK/include/obs/obs
 grep -Eq "^#define LIBOBS_API_MINOR_VER $CI_OBS_MINOR$" "$CI_SDK/include/obs/obs-config.h"
 # Specialized callers can retain their complete existing build/test/package
 # verifier. Only the pinned SDK provisioning is shared in this mode.
-if [[ "$mode" == --sdk-only ]]; then
+if [[ "$mode" == --sdk-only || "$mode" == --sdk-cache-restore ]]; then
     exit 0
 fi
 if [[ -n "${OBS_CI_LOCAL_BUILD:-}" ]]; then

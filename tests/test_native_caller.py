@@ -100,6 +100,9 @@ set -eu
 if [[ "$1" == sdk-fingerprint ]]; then
   echo '{"cache_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 elif [[ "$1" == sdk-prepare ]]; then
+  if [[ -e "$RUNNER_TEMP/caller-work/obs/rejected" ]]; then
+    echo "fixture invalid restored SDK" >&2; exit 82
+  fi
   sdk="$RUNNER_TEMP/caller-work/obs/sdk"
   mkdir -p "$sdk/lib/cmake/libobs" "$sdk/include/obs"
   touch "$sdk/lib/cmake/libobs/libobsConfig.cmake"
@@ -131,6 +134,17 @@ fi
             self.assertTrue((work / "obs/sdk/OBS_SDK_VERSION").is_file())
             self.assertFalse((work / "unexpected-build").exists())
             self.assertFalse((root / "plugin-ci").exists())
+            # A rejected restore is quarantined; a fresh build replaces it
+            # only in the explicit cache preparation phase.
+            (work / "obs/rejected").write_text("bad restored bytes")
+            result = subprocess.run([*cmd, "--sdk-cache-restore"], env=env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            quarantined = list(work.glob("rejected-sdk.*/rejected"))
+            self.assertEqual(len(quarantined), 1)
+            self.assertEqual(quarantined[0].read_text(), "bad restored bytes")
+            self.assertFalse((work / "obs/rejected").exists())
+            self.assertFalse((work / "unexpected-build").exists())
             # A modified preflight fingerprint must block SDK use.
             (work / "sdk-fingerprint.json").write_text("{}")
             self.assertNotEqual(subprocess.run([*cmd, "--sdk-only"], env=env,
